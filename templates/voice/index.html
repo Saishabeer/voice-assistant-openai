@@ -4,48 +4,75 @@
   <meta charset="utf-8"/>
   <title>Live AI Voice Assist (OpenAI Realtime + Whisper)</title>
   <style>
-    body { font-family: system-ui, Arial, sans-serif; margin: 30px; max-width: 900px; }
-    h1 { margin-bottom: 8px; }
-    #controls { margin-bottom: 16px; }
-    #controls button { padding: 8px 12px; margin-right: 8px; }
-    #status { color: #555; font-size: 0.9em; margin-left: 8px; }
-    .row { display: flex; gap: 20px; align-items: flex-start; }
+    :root {
+      --bg: #0f1115;
+      --panel: #161a22;
+      --text: #e6e9ef;
+      --muted: #9aa4b2;
+      --accent: #3b82f6;
+      --border: #222837;
+    }
+    html, body { height: 100%; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin: 0;
+      background: radial-gradient(1200px 800px at 10% -20%, #1a2030 0, #0f1115 60%) fixed;
+      color: var(--text);
+    }
+    .container { max-width: 980px; margin: 32px auto; padding: 0 20px; }
+    h1 { margin: 0 0 10px; font-weight: 700; letter-spacing: .2px; }
+    #controls {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
+    }
+    #controls button {
+      padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
+      background: #1a2230; color: var(--text); cursor: pointer; transition: all .15s ease;
+    }
+    #controls button:hover { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.15) inset; }
+    #controls button[disabled] { opacity: .5; cursor: not-allowed; }
+    #status { color: var(--muted); font-size: 0.95em; margin-left: 6px; }
+    .row { display: flex; gap: 18px; align-items: stretch; }
     .col { flex: 1; min-width: 280px; }
-    .panel { border: 1px solid #ddd; border-radius: 6px; padding: 10px; min-height: 150px; }
-    .label { font-weight: bold; margin-bottom: 6px; }
-    #userTranscript, #aiTranscript { white-space: pre-wrap; min-height: 120px; }
-    audio { width: 100%; margin-top: 6px; }
-    .small { color: #777; font-size: 12px; }
-    .muted { color: #999; }
+    .panel {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px; min-height: 180px; box-shadow: 0 8px 30px rgba(0,0,0,.28);
+    }
+    .label { font-weight: 600; margin-bottom: 8px; color: #b6c2d0; }
+    #userTranscript, #aiTranscript { white-space: pre-wrap; min-height: 130px; }
+    .small { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    audio { width: 100%; margin-top: 6px; outline: none; }
+    .muted { color: var(--muted); }
   </style>
 </head>
 <body>
-  <h1>Live AI Voice Assist</h1>
-  <div id="controls">
-    <button id="startBtn">Start</button>
-    <button id="stopBtn" disabled>Stop</button>
-    <span id="status">Idle</span>
-  </div>
+  <div class="container">
+    <h1>Live AI Voice Assist</h1>
+    <div id="controls">
+      <button id="startBtn">Start</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <span id="status">Idle</span>
+    </div>
 
-  <div class="row">
-    <div class="col">
-      <div class="panel">
-        <div class="label">You (live transcription)</div>
-        <div id="userTranscript" class="muted">Speak after you click Start…</div>
+    <div class="row">
+      <div class="col">
+        <div class="panel">
+          <div class="label">You (live transcription)</div>
+          <div id="userTranscript" class="muted">Speak after you click Start…</div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="panel">
+          <div class="label">Assistant (text)</div>
+          <div id="aiTranscript" class="muted">The assistant will respond here.</div>
+          <div class="small">Audio playback:</div>
+          <audio id="aiAudio" autoplay playsinline></audio>
+        </div>
       </div>
     </div>
-    <div class="col">
-      <div class="panel">
-        <div class="label">Assistant (text)</div>
-        <div id="aiTranscript" class="muted">The assistant will respond here.</div>
-        <div class="small">Audio playback:</div>
-        <audio id="aiAudio" autoplay playsinline></audio>
-      </div>
-    </div>
-  </div>
 
-  <div class="small" style="margin-top:12px;">
-    Tip: Use Chrome/Edge on http://127.0.0.1:8000 for local mic/WebRTC. Ensure your OpenAI account has access to the realtime model.
+    <div class="small" style="margin-top:12px;">
+      Tip: Use Chrome/Edge on http://127.0.0.1:8000 for local mic/WebRTC. Ensure your OpenAI account has access to the realtime model.
+    </div>
   </div>
 
 <script>
@@ -60,7 +87,7 @@
   let pc = null;
   let micStream = null;
   let eventsDC = null;
-  const DEBUG_EVENTS = false; // set true to log all events
+  const DEBUG_EVENTS = false;
 
   function setStatus(text){ statusEl.textContent = text; }
   function clearEl(el){ el.textContent = ""; el.classList.remove("muted"); }
@@ -74,12 +101,7 @@
     eventsDC.onclose = () => setStatus("Events channel closed.");
     eventsDC.onmessage = (ev) => {
       let evt;
-      try {
-        evt = JSON.parse(ev.data);
-      } catch (e) {
-        // Non-JSON messages are ignored
-        return;
-      }
+      try { evt = JSON.parse(ev.data); } catch { return; }
       if (DEBUG_EVENTS) console.log("oai-event:", evt);
       handleRealtimeEvent(evt);
     };
@@ -88,12 +110,6 @@
   function handleRealtimeEvent(evt) {
     const t = evt?.type || "";
 
-    // 1) Input transcription events (from Whisper)
-    // Common types seen:
-    // - "input_audio_buffer.transcription.delta"
-    // - "input_audio_buffer.transcription.completed"
-    // - "input_transcription.delta"
-    // - "input_transcription.completed"
     if (t.includes("transcription.delta")) {
       const text = extractText(evt);
       if (text) append(userEl, text);
@@ -104,10 +120,6 @@
       return;
     }
 
-    // 2) Assistant text output
-    // Newer format:
-    // - "response.output_text.delta"  -> delta: "..."
-    // - "response.output_text.done"
     if (t === "response.output_text.delta") {
       const text = extractText(evt);
       if (text) append(aiEl, text);
@@ -118,9 +130,6 @@
       return;
     }
 
-    // Backward-compatible/other variants:
-    // - "response.delta" with evt.delta.text or string
-    // - "response.message.delta"
     if (t.startsWith("response.") && t.endsWith(".delta")) {
       const text = extractText(evt);
       if (text) append(aiEl, text);
@@ -130,27 +139,16 @@
       appendLine(aiEl, "");
       return;
     }
-
-    // Ignore audio data or other non-text signals
-    // Examples: "response.audio.delta", "response.audio.done", VAD events, etc.
   }
 
   function extractText(evt) {
     if (!evt || typeof evt !== "object") return null;
-    // Most common: evt.delta is a string or { text: "..." }
     if (typeof evt.delta === "string") return evt.delta;
     if (evt.delta && typeof evt.delta.text === "string") return evt.delta.text;
-
-    // Some events provide direct text or transcript
     if (typeof evt.text === "string") return evt.text;
     if (typeof evt.transcript === "string") return evt.transcript;
     if (typeof evt.message === "string") return evt.message;
-
-    // Some responses embed text arrays (less common)
-    if (evt.output_text && Array.isArray(evt.output_text)) {
-      return evt.output_text.join("");
-    }
-
+    if (evt.output_text && Array.isArray(evt.output_text)) return evt.output_text.join("");
     return null;
   }
 
@@ -164,7 +162,6 @@
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
-      console.error(e);
       setStatus("Microphone access denied.");
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -188,7 +185,7 @@
     const ephemeralKey = session?.client_secret?.value;
     const model = session?.model || "gpt-4o-realtime-preview";
     if (!ephemeralKey) {
-      console.error("No ephemeral key in session:", session);
+      console.error("Invalid session:", session);
       setStatus("Invalid session response.");
       startBtn.disabled = false;
       stopBtn.disabled = true;
@@ -196,33 +193,20 @@
     }
 
     setStatus("Starting WebRTC...");
-    pc = new RTCPeerConnection({
-      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
-    });
+    pc = new RTCPeerConnection({ iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }] });
 
-    // If OpenAI creates the data channel, capture it:
     pc.ondatachannel = (event) => {
-      if (event.channel?.label === "oai-events") {
-        attachEventChannel(event.channel);
-      }
+      if (event.channel?.label === "oai-events") attachEventChannel(event.channel);
     };
-
-    // Also create proactively (harmless if server also creates):
     const proactiveDC = pc.createDataChannel("oai-events");
     attachEventChannel(proactiveDC);
 
-    // AI audio output -> attach to element
     pc.ontrack = (event) => {
       const [stream] = event.streams;
       aiAudio.srcObject = stream;
     };
 
-    // Send mic track to OpenAI
-    for (const track of micStream.getTracks()) {
-      pc.addTrack(track, micStream);
-    }
-
-    // Ask OpenAI to send us audio back
+    for (const track of micStream.getTracks()) pc.addTrack(track, micStream);
     pc.addTransceiver("audio", { direction: "recvonly" });
 
     const offer = await pc.createOffer();
@@ -239,11 +223,7 @@
         },
         body: offer.sdp,
       });
-      if (!sdpResponse.ok) {
-        const errTxt = await sdpResponse.text();
-        console.error("OpenAI SDP error:", errTxt);
-        throw new Error(errTxt);
-      }
+      if (!sdpResponse.ok) throw new Error(await sdpResponse.text());
       answerSdp = await sdpResponse.text();
     } catch (e) {
       console.error(e);
@@ -260,22 +240,16 @@
     stopBtn.disabled = true;
     startBtn.disabled = false;
     setStatus("Stopping...");
-
-    try { if (eventsDC) eventsDC.close(); } catch(e){}
+    try { if (eventsDC) eventsDC.close(); } catch {}
     try {
       if (pc) {
-        pc.getSenders().forEach(s => { try { s.track && s.track.stop(); } catch(e){} });
-        pc.getReceivers().forEach(r => { try { r.track && r.track.stop(); } catch(e){} });
+        pc.getSenders().forEach(s => { try { s.track && s.track.stop(); } catch {} });
+        pc.getReceivers().forEach(r => { try { r.track && r.track.stop(); } catch {} });
         pc.close();
       }
-    } catch(e){}
-    if (micStream) {
-      micStream.getTracks().forEach(t => t.stop());
-      micStream = null;
-    }
-    pc = null;
-    eventsDC = null;
-
+    } catch {}
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    pc = null; eventsDC = null;
     setStatus("Idle");
   }
 
