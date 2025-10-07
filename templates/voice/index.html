@@ -1,0 +1,265 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Live AI Voice Assist (OpenAI Realtime + Whisper)</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 30px; max-width: 900px; }
+    h1 { margin-bottom: 8px; }
+    #controls { margin-bottom: 16px; }
+    #controls button { padding: 8px 12px; margin-right: 8px; }
+    #status { color: #555; font-size: 0.9em; margin-left: 8px; }
+    .row { display: flex; gap: 20px; align-items: flex-start; }
+    .col { flex: 1; min-width: 280px; }
+    .panel { border: 1px solid #ddd; border-radius: 6px; padding: 10px; min-height: 150px; }
+    .label { font-weight: bold; margin-bottom: 6px; }
+    #userTranscript, #aiTranscript { white-space: pre-wrap; min-height: 120px; }
+    audio { width: 100%; margin-top: 6px; }
+    .small { color: #777; font-size: 12px; }
+    .muted { color: #999; }
+  </style>
+</head>
+<body>
+  <h1>Live AI Voice Assist</h1>
+  <div id="controls">
+    <button id="startBtn">Start</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <span id="status">Idle</span>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <div class="panel">
+        <div class="label">You (live transcription)</div>
+        <div id="userTranscript" class="muted">Speak after you click Start…</div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel">
+        <div class="label">Assistant (text)</div>
+        <div id="aiTranscript" class="muted">The assistant will respond here.</div>
+        <div class="small">Audio playback:</div>
+        <audio id="aiAudio" autoplay playsinline></audio>
+      </div>
+    </div>
+  </div>
+
+  <div class="small" style="margin-top:12px;">
+    Tip: Use Chrome/Edge on http://127.0.0.1:8000 for local mic/WebRTC. Ensure your OpenAI account has access to the realtime model.
+  </div>
+
+<script>
+(function(){
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn  = document.getElementById("stopBtn");
+  const statusEl = document.getElementById("status");
+  const userEl   = document.getElementById("userTranscript");
+  const aiEl     = document.getElementById("aiTranscript");
+  const aiAudio  = document.getElementById("aiAudio");
+
+  let pc = null;
+  let micStream = null;
+  let eventsDC = null;
+
+  function setStatus(text){ statusEl.textContent = text; }
+  function clearEl(el){ el.textContent = ""; el.classList.remove("muted"); }
+  function append(el, text){ el.textContent += text; el.scrollTop = el.scrollHeight; }
+  function appendLine(el, text){ append(el, (text || "") + "\n"); }
+
+  function attachEventChannel(dc) {
+    if (!dc) return;
+    eventsDC = dc;
+    eventsDC.onopen = () => setStatus("Connected (events channel open).");
+    eventsDC.onclose = () => setStatus("Events channel closed.");
+    eventsDC.onmessage = (ev) => {
+      try {
+        const evt = JSON.parse(ev.data);
+        handleRealtimeEvent(evt);
+      } catch (e) {
+        // Non-JSON messages are ignored
+      }
+    };
+  }
+
+  function handleRealtimeEvent(evt) {
+    // Heuristic parsing to support multiple event shapes
+    // 1) Input transcripts (from Whisper)
+    if (evt?.type && evt.type.includes("transcription")) {
+      const text = extractText(evt);
+      if (text) {
+        append(userEl, text);
+      }
+      if (evt.type.endsWith("completed")) {
+        appendLine(userEl, "");
+      }
+      return;
+    }
+
+    // 2) Assistant response deltas
+    if (evt?.type && evt.type.startsWith("response.delta")) {
+      const text = extractText(evt);
+      if (text) {
+        append(aiEl, text);
+      }
+      return;
+    }
+
+    // 3) Assistant response completed -> newline for readability
+    if (evt?.type && evt.type === "response.completed") {
+      appendLine(aiEl, "");
+      return;
+    }
+
+    // Optional: uncomment to inspect raw events
+    // console.log("Event:", evt);
+  }
+
+  function extractText(evt) {
+    if (!evt || typeof evt !== "object") return null;
+    if (typeof evt.text === "string") return evt.text;
+    if (typeof evt.message === "string") return evt.message;
+    if (evt.delta) {
+      if (typeof evt.delta === "string") return evt.delta;
+      if (typeof evt.delta.text === "string") return evt.delta.text;
+    }
+    if (typeof evt.transcript === "string") return evt.transcript;
+    return null;
+  }
+
+  async function start() {
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    setStatus("Requesting microphone...");
+    clearEl(userEl);
+    clearEl(aiEl);
+
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      console.error(e);
+      setStatus("Microphone access denied.");
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      return;
+    }
+
+    setStatus("Creating session...");
+    let session;
+    try {
+      const r = await fetch("/session/");
+      if (!r.ok) throw new Error(await r.text());
+      session = await r.json();
+    } catch (e) {
+      console.error(e);
+      setStatus("Failed to create session.");
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      return;
+    }
+
+    const ephemeralKey = session?.client_secret?.value;
+    const model = session?.model || "gpt-4o-realtime-preview";
+    if (!ephemeralKey) {
+      console.error("No ephemeral key in session:", session);
+      setStatus("Invalid session response.");
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      return;
+    }
+
+    setStatus("Starting WebRTC...");
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+    });
+
+    // Some OpenAI examples provide a data channel from the server named "oai-events".
+    // Listen for it here.
+    pc.ondatachannel = (event) => {
+      if (event.channel?.label === "oai-events") {
+        attachEventChannel(event.channel);
+      }
+    };
+
+    // If the server expects an existing data channel, create one proactively as well.
+    // This does not interfere if the server also creates its own.
+    const proactiveDC = pc.createDataChannel("oai-events");
+    attachEventChannel(proactiveDC);
+
+    // AI audio output -> attach to element
+    pc.ontrack = (event) => {
+      const [stream] = event.streams;
+      aiAudio.srcObject = stream;
+    };
+
+    // Send mic track to OpenAI
+    for (const track of micStream.getTracks()) {
+      pc.addTrack(track, micStream);
+    }
+
+    // Ask OpenAI to send us audio back
+    pc.addTransceiver("audio", { direction: "recvonly" });
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    let answerSdp = "";
+    try {
+      const sdpResponse = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${ephemeralKey}`,
+          "Content-Type": "application/sdp",
+          "OpenAI-Beta": "realtime=v1",
+        },
+        body: offer.sdp,
+      });
+      if (!sdpResponse.ok) {
+        const errTxt = await sdpResponse.text();
+        console.error("OpenAI SDP error:", errTxt);
+        throw new Error(errTxt);
+      }
+      answerSdp = await sdpResponse.text();
+    } catch (e) {
+      console.error(e);
+      setStatus("OpenAI SDP exchange failed.");
+      stop();
+      return;
+    }
+
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    setStatus("Live. Speak to your mic.");
+  }
+
+  function stop() {
+    stopBtn.disabled = true;
+    startBtn.disabled = false;
+    setStatus("Stopping...");
+
+    try {
+      if (eventsDC) eventsDC.close();
+    } catch(e){}
+
+    try {
+      if (pc) {
+        pc.getSenders().forEach(s => { try { s.track && s.track.stop(); } catch(e){} });
+        pc.getReceivers().forEach(r => { try { r.track && r.track.stop(); } catch(e){} });
+        pc.close();
+      }
+    } catch(e){}
+
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+
+    pc = null;
+    eventsDC = null;
+    setStatus("Idle");
+  }
+
+  startBtn.addEventListener("click", start);
+  stopBtn.addEventListener("click", stop);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# live_assist/urls.py
+from django.contrib import admin
+from django.urls import path
+from voice import views
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+    path("", views.index, name="index"),
+    path("session/", views.realtime_session, name="realtime_session"),
+]
