@@ -1,6 +1,6 @@
 """
 Centralized constants for models, prompts, and endpoints.
-Override defaults via environment variables as needed.
+Override via environment variables where needed.
 """
 import os
 
@@ -52,9 +52,12 @@ RISHI_SYSTEM_INSTRUCTION = '''You are **Rishi**, a professional AI salesperson f
 - End interactions with a clear next step.'''
 
 # Defaults (can be overridden with env vars)
-DEFAULT_REALTIME_MODEL = "gpt-4o-realtime-preview"
-DEFAULT_VOICE = "verse"
-DEFAULT_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"  # set to "whisper-1" for Whisper
+DEFAULT_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-4o-realtime-preview")
+DEFAULT_VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "verse")
+# Ultra-fast STT; set to "whisper-1" for Whisper accuracy
+DEFAULT_TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+instr_env = os.environ.get("ASSISTANT_INSTRUCTIONS")
+DEFAULT_INSTRUCTIONS = instr_env.strip() if instr_env and instr_env.strip() else RISHI_SYSTEM_INSTRUCTION
 DEFAULT_MODALITIES = ["text", "audio"]
 
 # OpenAI Realtime API config
@@ -63,8 +66,5 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com").rs
 
 
 def get_realtime_session_url() -> str:
-    """
-    Build the Realtime session creation endpoint using the configured base URL.
-    Example: https://api.openai.com/v1/realtime/sessions
-    """
+    """Build the Realtime session creation endpoint."""
     return f"{OPENAI_BASE_URL}/v1/realtime/sessions"
