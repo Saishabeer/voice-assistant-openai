@@ -77,6 +77,8 @@
 
 <script>
 (function(){
+  // --- 1. DOM Element References & State Variables ---
+  // Get references to all the interactive elements on the page.
   const startBtn = document.getElementById("startBtn");
   const stopBtn  = document.getElementById("stopBtn");
   const statusEl = document.getElementById("status");
@@ -84,16 +86,21 @@
   const aiEl     = document.getElementById("aiTranscript");
   const aiAudio  = document.getElementById("aiAudio");
 
+  // State variables to hold the WebRTC connection, mic stream, and data channel.
   let pc = null;
   let micStream = null;
   let eventsDC = null;
   const DEBUG_EVENTS = false;
 
+  // --- 2. UI Helper Functions ---
+  // These functions update the UI elements like status text and transcript boxes.
   function setStatus(text){ statusEl.textContent = text; }
   function clearEl(el){ el.textContent = ""; el.classList.remove("muted"); }
   function append(el, text){ el.textContent += text; el.scrollTop = el.scrollHeight; }
   function appendLine(el, text){ append(el, (text || "") + "\n"); }
 
+  // --- 3. WebRTC Event Handling ---
+  // This function attaches listeners to the 'oai-events' data channel from OpenAI.
   function attachEventChannel(dc) {
     if (!dc) return;
     eventsDC = dc;
@@ -107,6 +114,7 @@
     };
   }
 
+  // This function processes the different types of events received from OpenAI.
   function handleRealtimeEvent(evt) {
     const t = evt?.type || "";
 
@@ -141,6 +149,7 @@
     }
   }
 
+  // A helper to safely extract text from various possible event structures.
   function extractText(evt) {
     if (!evt || typeof evt !== "object") return null;
     if (typeof evt.delta === "string") return evt.delta;
@@ -152,13 +161,16 @@
     return null;
   }
 
+  // --- 4. Core Application Logic (Start/Stop) ---
   async function start() {
+    // --- 4a. Initialize UI ---
     startBtn.disabled = true;
     stopBtn.disabled = false;
     setStatus("Requesting microphone...");
     clearEl(userEl);
     clearEl(aiEl);
 
+    // --- 4b. Get Microphone Access ---
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
@@ -168,6 +180,7 @@
       return;
     }
 
+    // --- 4c. Fetch Session from Backend ---
     setStatus("Creating session...");
     let session;
     try {
@@ -182,6 +195,7 @@
       return;
     }
 
+    // --- 4d. Validate Session and Get Ephemeral Key ---
     const ephemeralKey = session?.client_secret?.value;
     const model = session?.model || "gpt-4o-realtime-preview";
     if (!ephemeralKey) {
@@ -192,28 +206,38 @@
       return;
     }
 
+    // --- 4e. Initialize WebRTC Peer Connection ---
     setStatus("Starting WebRTC...");
     pc = new RTCPeerConnection({ iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }] });
 
+    // --- 4f. Set up WebRTC Event Handlers ---
+    // Handle incoming data channels from OpenAI (for events).
     pc.ondatachannel = (event) => {
       if (event.channel?.label === "oai-events") attachEventChannel(event.channel);
     };
+    // Proactively create the data channel so we don't miss the 'onopen' event.
     const proactiveDC = pc.createDataChannel("oai-events");
     attachEventChannel(proactiveDC);
 
+    // Handle incoming audio tracks from OpenAI.
     pc.ontrack = (event) => {
       const [stream] = event.streams;
       aiAudio.srcObject = stream;
     };
 
+    // --- 4g. Add Local Media to the Connection ---
+    // Add user's microphone track to send audio to OpenAI.
     for (const track of micStream.getTracks()) pc.addTrack(track, micStream);
+    // Add a transceiver to receive audio from OpenAI.
     pc.addTransceiver("audio", { direction: "recvonly" });
 
+    // --- 4h. Create and Exchange SDP Offer/Answer with OpenAI ---
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
     let answerSdp = "";
     try {
+      // The fetch call sends our local SDP (the "offer") to OpenAI's realtime endpoint.
       const sdpResponse = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
         method: "POST",
         headers: {
@@ -223,6 +247,7 @@
         },
         body: offer.sdp,
       });
+      // OpenAI responds with its SDP (the "answer").
       if (!sdpResponse.ok) throw new Error(await sdpResponse.text());
       answerSdp = await sdpResponse.text();
     } catch (e) {
@@ -232,10 +257,13 @@
       return;
     }
 
+    // --- 4i. Finalize Connection ---
+    // Set OpenAI's SDP as the remote description to establish the peer-to-peer connection.
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
     setStatus("Live. Speak to your mic.");
   }
 
+  // This function cleans up all resources when the session is stopped.
   function stop() {
     stopBtn.disabled = true;
     startBtn.disabled = false;

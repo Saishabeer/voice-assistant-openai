@@ -5,6 +5,7 @@
 
 # IDE files
 .idea/
+.qodo/
 
 # Python virtual environment
 .venv/
@@ -24,3 +25,7 @@ staticfiles/
 
 # Log files
 *.log
+
+# Media files
+*.webm
+*.mp3
