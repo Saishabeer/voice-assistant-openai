@@ -60,6 +60,7 @@
   let pc = null;
   let micStream = null;
   let eventsDC = null;
+  const DEBUG_EVENTS = false; // set true to log all events
 
   function setStatus(text){ statusEl.textContent = text; }
   function clearEl(el){ el.textContent = ""; el.classList.remove("muted"); }
@@ -72,57 +73,84 @@
     eventsDC.onopen = () => setStatus("Connected (events channel open).");
     eventsDC.onclose = () => setStatus("Events channel closed.");
     eventsDC.onmessage = (ev) => {
+      let evt;
       try {
-        const evt = JSON.parse(ev.data);
-        handleRealtimeEvent(evt);
+        evt = JSON.parse(ev.data);
       } catch (e) {
         // Non-JSON messages are ignored
+        return;
       }
+      if (DEBUG_EVENTS) console.log("oai-event:", evt);
+      handleRealtimeEvent(evt);
     };
   }
 
   function handleRealtimeEvent(evt) {
-    // Heuristic parsing to support multiple event shapes
-    // 1) Input transcripts (from Whisper)
-    if (evt?.type && evt.type.includes("transcription")) {
+    const t = evt?.type || "";
+
+    // 1) Input transcription events (from Whisper)
+    // Common types seen:
+    // - "input_audio_buffer.transcription.delta"
+    // - "input_audio_buffer.transcription.completed"
+    // - "input_transcription.delta"
+    // - "input_transcription.completed"
+    if (t.includes("transcription.delta")) {
       const text = extractText(evt);
-      if (text) {
-        append(userEl, text);
-      }
-      if (evt.type.endsWith("completed")) {
-        appendLine(userEl, "");
-      }
+      if (text) append(userEl, text);
+      return;
+    }
+    if (t.includes("transcription.completed")) {
+      appendLine(userEl, "");
       return;
     }
 
-    // 2) Assistant response deltas
-    if (evt?.type && evt.type.startsWith("response.delta")) {
+    // 2) Assistant text output
+    // Newer format:
+    // - "response.output_text.delta"  -> delta: "..."
+    // - "response.output_text.done"
+    if (t === "response.output_text.delta") {
       const text = extractText(evt);
-      if (text) {
-        append(aiEl, text);
-      }
+      if (text) append(aiEl, text);
       return;
     }
-
-    // 3) Assistant response completed -> newline for readability
-    if (evt?.type && evt.type === "response.completed") {
+    if (t === "response.output_text.done") {
       appendLine(aiEl, "");
       return;
     }
 
-    // Optional: uncomment to inspect raw events
-    // console.log("Event:", evt);
+    // Backward-compatible/other variants:
+    // - "response.delta" with evt.delta.text or string
+    // - "response.message.delta"
+    if (t.startsWith("response.") && t.endsWith(".delta")) {
+      const text = extractText(evt);
+      if (text) append(aiEl, text);
+      return;
+    }
+    if (t === "response.completed") {
+      appendLine(aiEl, "");
+      return;
+    }
+
+    // Ignore audio data or other non-text signals
+    // Examples: "response.audio.delta", "response.audio.done", VAD events, etc.
   }
 
   function extractText(evt) {
     if (!evt || typeof evt !== "object") return null;
+    // Most common: evt.delta is a string or { text: "..." }
+    if (typeof evt.delta === "string") return evt.delta;
+    if (evt.delta && typeof evt.delta.text === "string") return evt.delta.text;
+
+    // Some events provide direct text or transcript
     if (typeof evt.text === "string") return evt.text;
-    if (typeof evt.message === "string") return evt.message;
-    if (evt.delta) {
-      if (typeof evt.delta === "string") return evt.delta;
-      if (typeof evt.delta.text === "string") return evt.delta.text;
-    }
     if (typeof evt.transcript === "string") return evt.transcript;
+    if (typeof evt.message === "string") return evt.message;
+
+    // Some responses embed text arrays (less common)
+    if (evt.output_text && Array.isArray(evt.output_text)) {
+      return evt.output_text.join("");
+    }
+
     return null;
   }
 
@@ -172,16 +200,14 @@
       iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     });
 
-    // Some OpenAI examples provide a data channel from the server named "oai-events".
-    // Listen for it here.
+    // If OpenAI creates the data channel, capture it:
     pc.ondatachannel = (event) => {
       if (event.channel?.label === "oai-events") {
         attachEventChannel(event.channel);
       }
     };
 
-    // If the server expects an existing data channel, create one proactively as well.
-    // This does not interfere if the server also creates its own.
+    // Also create proactively (harmless if server also creates):
     const proactiveDC = pc.createDataChannel("oai-events");
     attachEventChannel(proactiveDC);
 
@@ -235,10 +261,7 @@
     startBtn.disabled = false;
     setStatus("Stopping...");
 
-    try {
-      if (eventsDC) eventsDC.close();
-    } catch(e){}
-
+    try { if (eventsDC) eventsDC.close(); } catch(e){}
     try {
       if (pc) {
         pc.getSenders().forEach(s => { try { s.track && s.track.stop(); } catch(e){} });
@@ -246,14 +269,13 @@
         pc.close();
       }
     } catch(e){}
-
     if (micStream) {
       micStream.getTracks().forEach(t => t.stop());
       micStream = null;
     }
-
     pc = null;
     eventsDC = null;
+
     setStatus("Idle");
   }
 
