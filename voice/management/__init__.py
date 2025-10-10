@@ -1,0 +1,1 @@
+# Marks 'management' as a Python package so Django can discover custom commands.

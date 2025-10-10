@@ -7,12 +7,12 @@ import os
 # Persona prompt (Rishi)
 RISHI_SYSTEM_INSTRUCTION = '''You are **Rishi**, a professional AI salesperson for Techjays.
 
-🎯 Primary Role:
+ Primary Role:
 - Understand customer needs with qualifying questions.
 - Recommend the right Techjays service(s).
 - Share pricing ranges, case studies, and guide toward booking a demo or sharing contact info.
 
-📖 Techjays Knowledge Base (use this info in your answers):
+ Techjays Knowledge Base (use this info in your answers):
 - **Services Offered:**
   • Artificial Intelligence & Data/Analytics (AI models, predictive analytics, recommendation engines)
   • Custom Software & Mobile/Web Apps (end-to-end development, MVP → enterprise scale)
@@ -36,13 +36,13 @@ RISHI_SYSTEM_INSTRUCTION = '''You are **Rishi**, a professional AI salesperson f
   • Strong expertise in AI, cloud, and product engineering.
   • Focus on ROI: many clients recover investments within months.
 
-🗣️ Tone & Style:
+️ Tone & Style:
 - Friendly, confident, consultative.
 - Avoid jargon unless the customer is technical.
 - Keep answers clear and concise, but expand when asked.
 - This is voice chat, so speak naturally and conversationally.
 
-🚫 Rules:
+ Rules:
 - Do NOT invent prices, features, or case studies.
 - If exact detail is not available, say: "I'll confirm that with a specialist — may I connect you or schedule a demo?"
 - Always aim to move the conversation toward demo booking or lead capture.
@@ -56,11 +56,12 @@ DEFAULT_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-4o-realtim
 DEFAULT_VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "verse")
 # Ultra-fast STT; set to "whisper-1" for Whisper accuracy
 DEFAULT_TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
-instr_env = os.environ.get("ASSISTANT_INSTRUCTIONS")
-DEFAULT_INSTRUCTIONS = instr_env.strip() if instr_env and instr_env.strip() else RISHI_SYSTEM_INSTRUCTION
 DEFAULT_MODALITIES = ["text", "audio"]
 
-# OpenAI Realtime API config
+# Summarization model (fast, cheap)
+DEFAULT_SUMMARY_MODEL = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
+
+# OpenAI API config
 OPENAI_BETA_HEADER_VALUE = "realtime=v1"
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com").rstrip("/")
 
@@ -68,3 +69,8 @@ OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com").rs
 def get_realtime_session_url() -> str:
     """Build the Realtime session creation endpoint."""
     return f"{OPENAI_BASE_URL}/v1/realtime/sessions"
+
+
+def get_chat_completions_url() -> str:
+    """Chat Completions endpoint (used for summary)."""
+    return f"{OPENAI_BASE_URL}/v1/chat/completions"

@@ -5,25 +5,17 @@
   <title>Live AI Voice Assist (OpenAI Realtime + Whisper)</title>
   <style>
     :root {
-      --bg: #0f1115;
-      --panel: #161a22;
-      --text: #e6e9ef;
-      --muted: #9aa4b2;
-      --accent: #3b82f6;
-      --border: #222837;
+      --bg: #0f1115; --panel: #161a22; --text: #e6e9ef; --muted: #9aa4b2;
+      --accent: #3b82f6; --border: #222837;
     }
     html, body { height: 100%; }
     body {
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      margin: 0;
-      background: radial-gradient(1200px 800px at 10% -20%, #1a2030 0, #0f1115 60%) fixed;
-      color: var(--text);
+      margin: 0; background: radial-gradient(1200px 800px at 10% -20%, #1a2030 0, #0f1115 60%) fixed; color: var(--text);
     }
     .container { max-width: 980px; margin: 32px auto; padding: 0 20px; }
     h1 { margin: 0 0 10px; font-weight: 700; letter-spacing: .2px; }
-    #controls {
-      display: flex; align-items: center; gap: 10px; margin-bottom: 18px;
-    }
+    #controls { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
     #controls button {
       padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
       background: #1a2230; color: var(--text); cursor: pointer; transition: all .15s ease;
@@ -33,10 +25,7 @@
     #status { color: var(--muted); font-size: 0.95em; margin-left: 6px; }
     .row { display: flex; gap: 18px; align-items: stretch; }
     .col { flex: 1; min-width: 280px; }
-    .panel {
-      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-      padding: 12px; min-height: 180px; box-shadow: 0 8px 30px rgba(0,0,0,.28);
-    }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-height: 180px; box-shadow: 0 8px 30px rgba(0,0,0,.28); }
     .label { font-weight: 600; margin-bottom: 8px; color: #b6c2d0; }
     #userTranscript, #aiTranscript { white-space: pre-wrap; min-height: 130px; }
     .small { color: var(--muted); font-size: 12px; margin-top: 6px; }
@@ -77,8 +66,6 @@
 
 <script>
 (function(){
-  // --- 1. DOM Element References & State Variables ---
-  // Get references to all the interactive elements on the page.
   const startBtn = document.getElementById("startBtn");
   const stopBtn  = document.getElementById("stopBtn");
   const statusEl = document.getElementById("status");
@@ -86,21 +73,17 @@
   const aiEl     = document.getElementById("aiTranscript");
   const aiAudio  = document.getElementById("aiAudio");
 
-  // State variables to hold the WebRTC connection, mic stream, and data channel.
   let pc = null;
   let micStream = null;
   let eventsDC = null;
+  let sessionId = ""; // capture from /session to store with conversation
   const DEBUG_EVENTS = false;
 
-  // --- 2. UI Helper Functions ---
-  // These functions update the UI elements like status text and transcript boxes.
   function setStatus(text){ statusEl.textContent = text; }
   function clearEl(el){ el.textContent = ""; el.classList.remove("muted"); }
   function append(el, text){ el.textContent += text; el.scrollTop = el.scrollHeight; }
   function appendLine(el, text){ append(el, (text || "") + "\n"); }
 
-  // --- 3. WebRTC Event Handling ---
-  // This function attaches listeners to the 'oai-events' data channel from OpenAI.
   function attachEventChannel(dc) {
     if (!dc) return;
     eventsDC = dc;
@@ -114,7 +97,6 @@
     };
   }
 
-  // This function processes the different types of events received from OpenAI.
   function handleRealtimeEvent(evt) {
     const t = evt?.type || "";
 
@@ -149,7 +131,6 @@
     }
   }
 
-  // A helper to safely extract text from various possible event structures.
   function extractText(evt) {
     if (!evt || typeof evt !== "object") return null;
     if (typeof evt.delta === "string") return evt.delta;
@@ -161,16 +142,13 @@
     return null;
   }
 
-  // --- 4. Core Application Logic (Start/Stop) ---
   async function start() {
-    // --- 4a. Initialize UI ---
     startBtn.disabled = true;
     stopBtn.disabled = false;
     setStatus("Requesting microphone...");
     clearEl(userEl);
     clearEl(aiEl);
 
-    // --- 4b. Get Microphone Access ---
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
@@ -180,13 +158,14 @@
       return;
     }
 
-    // --- 4c. Fetch Session from Backend ---
     setStatus("Creating session...");
     let session;
     try {
       const r = await fetch("/session/");
       if (!r.ok) throw new Error(await r.text());
       session = await r.json();
+      sessionId = session?.id || ""; // capture for saving
+      console.log("Session created:", sessionId);
     } catch (e) {
       console.error(e);
       setStatus("Failed to create session.");
@@ -195,7 +174,6 @@
       return;
     }
 
-    // --- 4d. Validate Session and Get Ephemeral Key ---
     const ephemeralKey = session?.client_secret?.value;
     const model = session?.model || "gpt-4o-realtime-preview";
     if (!ephemeralKey) {
@@ -206,38 +184,28 @@
       return;
     }
 
-    // --- 4e. Initialize WebRTC Peer Connection ---
     setStatus("Starting WebRTC...");
     pc = new RTCPeerConnection({ iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }] });
 
-    // --- 4f. Set up WebRTC Event Handlers ---
-    // Handle incoming data channels from OpenAI (for events).
     pc.ondatachannel = (event) => {
       if (event.channel?.label === "oai-events") attachEventChannel(event.channel);
     };
-    // Proactively create the data channel so we don't miss the 'onopen' event.
     const proactiveDC = pc.createDataChannel("oai-events");
     attachEventChannel(proactiveDC);
 
-    // Handle incoming audio tracks from OpenAI.
     pc.ontrack = (event) => {
       const [stream] = event.streams;
       aiAudio.srcObject = stream;
     };
 
-    // --- 4g. Add Local Media to the Connection ---
-    // Add user's microphone track to send audio to OpenAI.
     for (const track of micStream.getTracks()) pc.addTrack(track, micStream);
-    // Add a transceiver to receive audio from OpenAI.
     pc.addTransceiver("audio", { direction: "recvonly" });
 
-    // --- 4h. Create and Exchange SDP Offer/Answer with OpenAI ---
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
     let answerSdp = "";
     try {
-      // The fetch call sends our local SDP (the "offer") to OpenAI's realtime endpoint.
       const sdpResponse = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
         method: "POST",
         headers: {
@@ -247,27 +215,50 @@
         },
         body: offer.sdp,
       });
-      // OpenAI responds with its SDP (the "answer").
       if (!sdpResponse.ok) throw new Error(await sdpResponse.text());
       answerSdp = await sdpResponse.text();
     } catch (e) {
       console.error(e);
       setStatus("OpenAI SDP exchange failed.");
-      stop();
+      await stop(); // ensure teardown if failed
       return;
     }
 
-    // --- 4i. Finalize Connection ---
-    // Set OpenAI's SDP as the remote description to establish the peer-to-peer connection.
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
     setStatus("Live. Speak to your mic.");
   }
 
-  // This function cleans up all resources when the session is stopped.
-  function stop() {
+  async function saveConversation() {
+    const user_text = userEl.textContent || "";
+    const ai_text = aiEl.textContent || "";
+    const payload = { session_id: sessionId || "", user_text, ai_text };
+
+    try {
+      console.log("Saving conversation...", payload);
+      const res = await fetch("/save-conversation/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true, // helps if page navigates, though we do not navigate here
+        body: JSON.stringify(payload),
+      });
+      const js = await res.json().catch(() => ({}));
+      console.log("Save result:", js);
+      return js;
+    } catch (e) {
+      console.warn("Failed to save conversation:", e);
+      return null;
+    }
+  }
+
+  async function stop() {
     stopBtn.disabled = true;
     startBtn.disabled = false;
     setStatus("Stopping...");
+
+    // 1) Save before tearing down WebRTC/mic
+    await saveConversation();
+
+    // 2) Tear down
     try { if (eventsDC) eventsDC.close(); } catch {}
     try {
       if (pc) {
@@ -278,11 +269,12 @@
     } catch {}
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
     pc = null; eventsDC = null;
+
     setStatus("Idle");
   }
 
   startBtn.addEventListener("click", start);
-  stopBtn.addEventListener("click", stop);
+  stopBtn.addEventListener("click", () => { stop(); });
 })();
 </script>
 </body>
