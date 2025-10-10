@@ -137,6 +137,24 @@ def _summarize_conversation_with_openai(user_text: str, ai_text: str) -> dict:
         return {}
 
 
+def _score_to_label(score: int | None) -> str:
+    """
+    Map satisfaction_score (1..5) to label.
+    1=very bad, 2=bad, 3=good, 4=happy, 5=excellent; empty if unknown.
+    """
+    mapping = {
+        1: "very bad",
+        2: "bad",
+        3: "good",
+        4: "happy",
+        5: "excellent",
+    }
+    try:
+        return mapping.get(int(score), "")
+    except Exception:
+        return ""
+
+
 @csrf_exempt
 def save_conversation(request):
     """
@@ -180,15 +198,18 @@ def save_conversation(request):
     summary_obj = _summarize_conversation_with_openai(user_text, ai_text)
     summary = summary_obj.get("summary", "")
     satisfaction = summary_obj.get("satisfaction_score", None)
-    if summary or satisfaction is not None:
-        try:
-            convo.summary = summary
-            convo.satisfaction_score = int(satisfaction) if satisfaction is not None else None
-            convo.save(update_fields=["summary", "satisfaction_score"])
-        except Exception:
-            logger.warning("Failed to set satisfaction score to int: %s", satisfaction)
 
-    # 3) Print to terminal
+    # 3) Persist computed fields (score + label + summary)
+    label = _score_to_label(satisfaction)
+    try:
+        convo.summary = summary
+        convo.satisfaction_score = int(satisfaction) if satisfaction is not None else None
+        convo.satisfaction_label = label
+        convo.save(update_fields=["summary", "satisfaction_score", "satisfaction_label"])
+    except Exception:
+        logger.warning("Failed to persist satisfaction fields | score=%s label=%s", satisfaction, label)
+
+    # 4) Print to terminal
     print("\n===== Conversation Saved =====")
     print(f"ID: {convo.id} | Session: {convo.session_id} | Created: {convo.created_at}")
     print("---- User Transcript ----")
@@ -198,13 +219,19 @@ def save_conversation(request):
     if summary or satisfaction is not None:
         print("---- Summary ----")
         print(summary or "(empty)")
-        print("---- Satisfaction (1-5) ----")
-        print(satisfaction if satisfaction is not None else "(n/a)")
+        print("---- Satisfaction ----")
+        print(f"score={satisfaction if satisfaction is not None else '(n/a)'} label='{label or '(n/a)'}'")
     print("==============================\n")
 
     logger.info(
-        "Conversation saved | id=%s | session_id=%s | user_len=%d | ai_len=%d | satisfaction=%s",
-        convo.id, convo.session_id, len(user_text), len(ai_text), str(satisfaction),
+        "Conversation saved | id=%s | session_id=%s | user_len=%d | ai_len=%d | satisfaction=%s | label=%s",
+        convo.id, convo.session_id, len(user_text), len(ai_text), str(satisfaction), label,
     )
 
-    return JsonResponse({"ok": True, "id": convo.id, "summary": summary, "satisfaction_score": satisfaction})
+    return JsonResponse({
+        "ok": True,
+        "id": convo.id,
+        "summary": summary,
+        "satisfaction_score": satisfaction,
+        "satisfaction_label": label,
+    })

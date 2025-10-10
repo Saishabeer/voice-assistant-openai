@@ -21,7 +21,7 @@ class Command(BaseCommand):
         order = opts["order"]
         qs = Conversation.objects.all().order_by("-id" if order == "desc" else "id")[:limit]
 
-        headers = ["ID", "Created (local)", "Sat", "User (preview)", "AI (preview)", "Summary (preview)"]
+        headers = ["ID", "Created (local)", "Sat", "Label", "User (preview)", "AI (preview)", "Summary (preview)"]
         rows = []
         for c in qs:
             created_local = localtime(c.created_at) if c.created_at else c.created_at
@@ -29,25 +29,23 @@ class Command(BaseCommand):
                 str(c.id),
                 created_local.strftime("%Y-%m-%d %H:%M:%S") if created_local else "",
                 str(c.satisfaction_score) if c.satisfaction_score is not None else "",
+                (c.satisfaction_label or ""),
                 _truncate(c.user_transcript, 60),
                 _truncate(c.ai_transcript, 60),
                 _truncate(c.summary, 60),
             ])
 
-        # Compute column widths
         widths = [len(h) for h in headers]
         for row in rows:
             for i, cell in enumerate(row):
                 widths[i] = max(widths[i], len(cell))
 
-        # Render helpers
         def sep(char="-", corner="+"):
             return corner + corner.join(char * (w + 2) for w in widths) + corner
 
         def fmt_row(vals):
             return "| " + " | ".join(val.ljust(widths[i]) for i, val in enumerate(vals)) + " |"
 
-        # Print table
         self.stdout.write(sep())
         self.stdout.write(fmt_row(headers))
         self.stdout.write(sep("="))

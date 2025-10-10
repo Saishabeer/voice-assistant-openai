@@ -9,6 +9,7 @@ class Conversation(models.Model):
     ai_transcript = models.TextField(blank=True, default="")
     summary = models.TextField(blank=True, default="")
     satisfaction_score = models.IntegerField(null=True, blank=True)
+    satisfaction_label = models.CharField(max_length=20, blank=True, default="")  # added label
 
     def __str__(self):
         ts = self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "N/A"
