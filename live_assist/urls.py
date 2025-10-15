@@ -1,4 +1,4 @@
-# Project URLConf: delegate to app routes and expose admin.
+# Project URLConf: delegate to app routes and expose admin only.
 from django.contrib import admin
 from django.urls import path, include
 

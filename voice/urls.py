@@ -1,4 +1,4 @@
-# URL configuration for the voice app.
+# URL configuration for the voice app (kept minimal and clear).
 from django.urls import path
 from .views import index, realtime_session, save_conversation
 

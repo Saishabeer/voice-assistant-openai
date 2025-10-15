@@ -1,4 +1,4 @@
-# Show lifecycle fields to inspect open vs. closed conversations and autosave behavior.
+# Clean admin: show only the important fields and a preview of the transcript.
 from django.contrib import admin
 from .models import Conversation
 
@@ -22,12 +22,22 @@ class ConversationAdmin(admin.ModelAdmin):
         "id",
         "created_at",
         "updated_at",
+        "last_activity",
         "session_id",
-        "is_closed",
-        "autosave_count",
         "short_conversation",
         "satisfaction_indicator",
         "structured_keys",
     )
+    list_filter = ("created_at",)
     search_fields = ("session_id", "conversation", "summary", "satisfaction_indicator")
-    list_filter = ("created_at", "is_closed")
+    readonly_fields = ("created_at", "updated_at", "last_activity")
+    fields = (
+        "session_id",
+        "conversation",
+        "summary",
+        "satisfaction_indicator",
+        "structured",
+        "created_at",
+        "updated_at",
+        "last_activity",
+    )

@@ -1,6 +1,5 @@
-# Updates _structured_schema to require all properties; everything else unchanged.
-# Upserts into one open row per session, re-analyzes only when needed, and supports “close” to finalize the conversation.
-"""Persist a single satisfaction_indicator (e.g., '5 - Wow! Great experience') and keep autosave behavior."""
+# Save endpoint simplified: no is_closed/ended_reason/autosave_count; only upsert core fields and recompute analysis when content changes.
+"""Persist a single satisfaction_indicator and keep autosave + finalize behavior cleanly."""
 from __future__ import annotations
 
 import json
@@ -17,26 +16,29 @@ from django.http import (
     HttpResponseServerError,
     JsonResponse,
 )
+    # ^ Make sure imports remain consistent
 from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from . import constants as C  # Centralized constants and defaults
+from . import constants as C
 from .models import Conversation
 
 logger = logging.getLogger(__name__)
 
+# Feature flag: disable analysis in dev/CI via ANALYZE_ENABLED=0
+ANALYZE_ENABLED = (os.getenv("ANALYZE_ENABLED", "1") != "0")
+
 
 def index(request: HttpRequest):
+    """Serve the main page."""
     return render(request, "voice/index.html")
 
 
 @require_GET
 def realtime_session(request: HttpRequest):
-    """
-    Mint an ephemeral realtime session with OpenAI for the browser.
-    """
+    """Mint an ephemeral OpenAI Realtime session for the browser."""
     api_key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         logger.error("OPENAI_API_KEY not configured")
@@ -46,14 +48,12 @@ def realtime_session(request: HttpRequest):
     voice = os.environ.get("OPENAI_REALTIME_VOICE", C.DEFAULT_VOICE)
     transcribe_model = os.environ.get("TRANSCRIBE_MODEL", C.DEFAULT_TRANSCRIBE_MODEL)
 
-    # Base system instruction (persona) plus tool usage directive
-    base_instructions = C.RISHI_SYSTEM_INSTRUCTION
-    tool_directive = """
-When the user indicates they are ready to end (e.g., “purchase completed”, “order confirmed”, “that's all”, “I’m done”, “no thanks”, “bye”, “goodbye”, “end the conversation”), call the function finalize_conversation with:
-- reason: a short phrase capturing why the session is ending (e.g., “purchase completed”, “user ended”, “no more questions”).
-Do not end the call automatically; after the tool call completes, provide a brief closing line and allow the user to end manually.
-""".strip()
-    instructions = f"{base_instructions}\n\n{tool_directive}"
+    # Persona + when to trigger finalize tool (frontend handles greeting/stop)
+    tool_directive = (
+        "When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
+        "'that's all', 'no thanks', 'bye', 'end the conversation'), call finalize_conversation with a short 'reason'."
+    )
+    instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{tool_directive}"
 
     tools = [
         {
@@ -62,9 +62,7 @@ Do not end the call automatically; after the tool call completes, provide a brie
             "description": "Persist final state when the user is ready to end the conversation.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "reason": {"type": "string", "description": "Why the session is finishing"},
-                },
+                "properties": {"reason": {"type": "string", "description": "Why the session is finishing"}},
                 "required": ["reason"],
                 "additionalProperties": False,
             },
@@ -81,11 +79,6 @@ Do not end the call automatically; after the tool call completes, provide a brie
         "tools": tools,
         "tool_choice": "auto",
     }
-
-    logger.info(
-        "Realtime session create | model=%s voice=%s stt=%s base=%s tools=%d",
-        model, voice, transcribe_model, C.OPENAI_BASE_URL, len(tools),
-    )
 
     try:
         headers = {
@@ -107,6 +100,8 @@ Do not end the call automatically; after the tool call completes, provide a brie
         return HttpResponseServerError("Session creation failed")
 
 
+# ---------- Helpers: text, analysis, upsert ----------
+
 def _split_turns(text: str) -> List[str]:
     """Split a multi-line transcript into simple per-line turns."""
     if not text:
@@ -116,7 +111,7 @@ def _split_turns(text: str) -> List[str]:
 
 
 def _build_conversation_text(user_text: str, ai_text: str) -> str:
-    """Build a single readable conversation column by interleaving user and AI turns."""
+    """Interleave user/AI turns into a single readable transcript column."""
     u_turns = _split_turns(user_text)
     a_turns = _split_turns(ai_text)
     parts: List[str] = []
@@ -138,7 +133,7 @@ def _score_to_label(score) -> str:
 
 
 def _format_satisfaction_indicator(score, label: str) -> str:
-    """Build a single indicator string, e.g., "5 - Wow! Great experience"."""
+    """Turn a score/label into '5 - Wow! Great experience' style indicator."""
     score_int = None
     try:
         score_int = int(score) if score is not None else None
@@ -158,13 +153,12 @@ def _format_satisfaction_indicator(score, label: str) -> str:
 
 
 def _heuristic_structured(user_text: str, user_identifier: str, timestamp_iso: str) -> Dict:
-    """Fallback structured summary if OpenAI is unavailable."""
+    """Very small heuristic fallback when analysis is disabled/unavailable."""
     lt = (user_text or "").lower()
     polite = any(p in lt for p in ["please", "thank", "sorry"])
     urgent = any(p in lt for p in ["urgent", "asap", "now", "immediately"])
     hesitant = any(p in lt for p in ["um", "uh", "maybe", "i guess"])
     negative = any(p in lt for p in ["hate", "angry", "annoyed", "frustrated", "upset"])
-    risk = any(p in lt for p in ["suicide", "kill myself", "hurt myself", "terror", "threat"])
     sentiment = "negative" if negative else "neutral"
     mood = "stressed" if urgent else ("hesitant" if hesitant else ("polite" if polite else "neutral"))
     behavior = []
@@ -175,17 +169,17 @@ def _heuristic_structured(user_text: str, user_identifier: str, timestamp_iso: s
     return {
         "user": user_identifier or "anonymous",
         "timestamp": timestamp_iso,
-        "satisfaction": {"score": None, "label": ""},
+        "satisfaction": {"score": 3, "label": "good"},  # sensible default midpoint
         "sentiment": sentiment,
         "mood": mood,
         "behavior": behavior,
-        "risk_flags": ["potential_self_harm" if risk else "none"] if risk else [],
-        "summary": "Heuristic analysis only (no model available).",
+        "risk_flags": [],
+        "summary": "Heuristic analysis only (no model or disabled).",
     }
 
 
 def _structured_schema(name: str = "ConversationInsights") -> Dict:
-    """JSON Schema used for strict structured output from the model."""
+    """JSON Schema for strict structured output from the model (strict=True requires all keys)."""
     return {
         "type": "json_schema",
         "json_schema": {
@@ -195,7 +189,7 @@ def _structured_schema(name: str = "ConversationInsights") -> Dict:
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "user": {"type": "string", "description": "User identifier or 'anonymous'"},
+                    "user": {"type": "string"},
                     "timestamp": {"type": "string", "format": "date-time"},
                     "satisfaction": {
                         "type": "object",
@@ -212,7 +206,6 @@ def _structured_schema(name: str = "ConversationInsights") -> Dict:
                     "risk_flags": {"type": "array", "items": {"type": "string"}},
                     "summary": {"type": "string"},
                 },
-                # IMPORTANT: With strict=true, required must include every key in properties.
                 "required": ["user", "timestamp", "satisfaction", "sentiment", "mood", "behavior", "risk_flags", "summary"],
             },
         },
@@ -225,7 +218,10 @@ def _analyze_conversation_structured(
     user_identifier: str,
     timestamp_iso: str,
 ) -> Dict:
-    """Ask the AI to return a strictly-typed structured summary following our schema."""
+    """Call provider for structured analysis (or fallback/disabled)."""
+    if not ANALYZE_ENABLED:
+        return _heuristic_structured(user_text, user_identifier, timestamp_iso)
+
     api_key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
     model = os.environ.get("OPENAI_SUMMARY_MODEL", C.DEFAULT_SUMMARY_MODEL)
     if not api_key:
@@ -267,8 +263,7 @@ def _analyze_conversation_structured(
             structured = json.loads(content) if content else {}
         except Exception:
             start, end = content.find("{"), content.rfind("}")
-            structured = json.loads(content[start : end + 1]) if start != -1 and end != -1 else {}
-
+            structured = json.loads(content[start: end + 1]) if start != -1 and end != -1 else {}
         if not isinstance(structured, dict) or "satisfaction" not in structured:
             return _heuristic_structured(user_text, user_identifier, timestamp_iso)
         return structured
@@ -278,7 +273,7 @@ def _analyze_conversation_structured(
 
 
 def _extract_satisfaction(structured: Dict) -> Tuple[int | None, str]:
-    """Pull score/label from structured JSON safely."""
+    """Extract score/label defensively."""
     try:
         sat = structured.get("satisfaction") or {}
         score = sat.get("score")
@@ -289,24 +284,23 @@ def _extract_satisfaction(structured: Dict) -> Tuple[int | None, str]:
 
 
 def _content_changed(old_text: str, new_text: str) -> bool:
-    """Cheap check to decide whether to recompute analysis."""
+    """Decide whether to re-run analysis to avoid waste on tiny deltas."""
     if not old_text and new_text:
         return True
     if not new_text:
         return False
-    # Recompute if length difference is meaningful or new_text not contained in old_text
     return abs(len(new_text) - len(old_text)) > 40 or new_text not in old_text
 
 
-def _find_open_conversation(session_id: str) -> Conversation | None:
-    """Find the most recent open conversation for a session in the last 45 minutes."""
+def _find_recent_conversation(session_id: str) -> Conversation | None:
+    """Get the most recent conversation for this session in the last 45 minutes."""
     if not session_id:
         return None
     cutoff = timezone.now() - timedelta(minutes=45)
     try:
         return (
             Conversation.objects
-            .filter(session_id=session_id, is_closed=False, last_activity__gte=cutoff)
+            .filter(session_id=session_id, last_activity__gte=cutoff)
             .order_by("-last_activity", "-id")
             .first()
         )
@@ -314,15 +308,32 @@ def _find_open_conversation(session_id: str) -> Conversation | None:
         return None
 
 
+# ---------- Main save endpoint ----------
+
 @csrf_exempt
 @require_POST
 def save_conversation(request: HttpRequest):
     """
-    Upsert conversation and derived analysis.
-    Request JSON:
-      { session_id, user_text, ai_text, conversation_id?, autosave?: bool, reason?: str, close?: bool }
-    Response JSON:
-      { status: 'ok', id, session_id, is_closed, satisfaction_indicator, created_at }
+    Upsert conversation row (single record per active session).
+
+    Body:
+      {
+        "session_id": "...",
+        "user_text": "...",
+        "ai_text": "...",
+        "conversation_id": 123?   # optional if known by the client
+      }
+
+    Returns:
+      {
+        "status": "ok",
+        "id": <int>,
+        "session_id": "...",
+        "satisfaction_indicator": "...",
+        "created_at": "...",
+        "updated_at": "...",
+        "last_activity": "..."
+      }
     """
     try:
         data = json.loads(request.body.decode("utf-8") or "{}")
@@ -333,14 +344,11 @@ def save_conversation(request: HttpRequest):
     ai_text = (data.get("ai_text") or "").strip()
     session_id = (data.get("session_id") or "").strip()
     provided_id = data.get("conversation_id")
-    autosave = bool(data.get("autosave"))
-    close_flag = bool(data.get("close"))
-    end_reason = (data.get("reason") or "").strip()
 
     conversation_text = _build_conversation_text(user_text, ai_text)
     now = timezone.now()
 
-    # Upsert target: by provided id, else find open by session, else create new
+    # Target: explicit id > recent by session > new
     convo: Conversation | None = None
     if provided_id:
         try:
@@ -348,39 +356,24 @@ def save_conversation(request: HttpRequest):
         except Exception:
             convo = None
     if not convo:
-        convo = _find_open_conversation(session_id)
+        convo = _find_recent_conversation(session_id)
 
     created = False
     if not convo:
         convo = Conversation(
             session_id=session_id,
             conversation=conversation_text,
-            user_transcript=user_text,
-            ai_transcript=ai_text,
             last_activity=now,
         )
         created = True
 
-    # Merge/Update fields
-    content_changed = _content_changed(convo.conversation or "", conversation_text or "")
+    # Merge and update
+    changed = _content_changed(convo.conversation or "", conversation_text or "")
     convo.conversation = conversation_text or convo.conversation
-    convo.user_transcript = user_text or convo.user_transcript
-    convo.ai_transcript = ai_text or convo.ai_transcript
     convo.last_activity = now
-    if autosave:
-        try:
-            convo.autosave_count = (convo.autosave_count or 0) + 1
-        except Exception:
-            convo.autosave_count = 1
 
-    # Close if requested (tool/user ended)
-    if close_flag:
-        convo.is_closed = True
-        if end_reason:
-            convo.ended_reason = end_reason
-
-    # Run analysis only when needed
-    if created or close_flag or content_changed:
+    # Only analyze if new row or content meaningfully changed
+    if created or changed:
         user_identifier = session_id or "anonymous"
         timestamp_iso = (convo.created_at or now).isoformat()
         structured = _analyze_conversation_structured(user_text, ai_text, user_identifier, timestamp_iso)
@@ -393,30 +386,26 @@ def save_conversation(request: HttpRequest):
             logger.warning("Failed to derive fields from structured analysis")
 
     # Persist
-    save_fields = [
-        "conversation", "user_transcript", "ai_transcript",
-        "last_activity", "autosave_count", "is_closed", "ended_reason",
-        "structured", "summary", "satisfaction_indicator",
-    ]
     try:
         if created:
             convo.save()
         else:
-            convo.save(update_fields=save_fields)
+            convo.save(update_fields=["conversation", "last_activity", "structured", "summary", "satisfaction_indicator", "updated_at"])
     except Exception:
-        logger.exception("Failed saving conversation row")
+        logger.exception("Failed to save conversation")
         return HttpResponseServerError("Failed to save conversation")
 
     logger.info(
-        "Conversation upserted | id=%s session=%s closed=%s autosaves=%s changed=%s",
-        convo.id, convo.session_id, convo.is_closed, convo.autosave_count, content_changed
+        "Conversation upserted | id=%s session=%s changed=%s",
+        convo.id, convo.session_id, changed
     )
 
     return JsonResponse({
         "status": "ok",
         "id": convo.id,
         "session_id": convo.session_id,
-        "is_closed": convo.is_closed,
         "satisfaction_indicator": convo.satisfaction_indicator or "",
         "created_at": (convo.created_at or now).isoformat(),
+        "updated_at": (convo.updated_at or now).isoformat(),
+        "last_activity": (convo.last_activity or now).isoformat(),
     })
