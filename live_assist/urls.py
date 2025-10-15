@@ -1,10 +1,8 @@
+# Project URLConf: delegate to app routes and expose admin.
 from django.contrib import admin
-from django.urls import path
-from voice import views
+from django.urls import path, include
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", views.index, name="index"),
-    path("session/", views.realtime_session, name="realtime_session"),
-    path("save-conversation/", views.save_conversation, name="save_conversation"),
+    path("", include("voice.urls")),
 ]

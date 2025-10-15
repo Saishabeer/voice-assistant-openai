@@ -2,27 +2,32 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+# Load environment variables from a .env file in the project root.
+# This is used for sensitive data like SECRET_KEY and OPENAI_API_KEY.
 load_dotenv()
 
+# Define the project's base directory (C:/Users/saish/Desktop/voice assist).
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Security
+# A secret key for cryptographic signing, loaded from the .env file.
+# The default is for development only and should not be used in production.
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret")
+
+# DEBUG mode should be False in a production environment.
 DEBUG = True
+
+# Defines the host/domain names that this Django site can serve.
 ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
-# Applications
+# Application definition: lists all Django apps that are activated in this project.
 INSTALLED_APPS = [
-    # Core Django apps
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # Project apps
-    "voice",
+    "voice",  # Our custom application for the voice assistant.
 ]
 
 MIDDLEWARE = [
@@ -35,12 +40,14 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+# The root URL configuration file for the project.
 ROOT_URLCONF = "live_assist.urls"
 
+# Configuration for Django's template engine.
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],  # keep central templates directory
+        "DIRS": [BASE_DIR / "templates"],  # A single global directory for templates.
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -53,11 +60,13 @@ TEMPLATES = [
     },
 ]
 
-# WSGI/ASGI
+# WSGI entry-point for web servers.
 WSGI_APPLICATION = "live_assist.wsgi.application"
-ASGI_APPLICATION = "live_assist.asgi.application"  # plain Django ASGI (no Channels)
 
-# Database (SQLite for development)
+# ASGI entry-point for asynchronous web servers (used by Django Channels for WebSockets, if enabled).
+ASGI_APPLICATION = "live_assist.asgi.application"
+
+# Database configuration. This project uses a simple SQLite database.
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -65,20 +74,18 @@ DATABASES = {
     }
 }
 
-# Internationalization
+# Internationalization settings.
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-# Static files
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"] if (BASE_DIR / "static").exists() else []
 
-# Default primary key field type
+# Default primary key field type for new models.
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# OpenAI config
+# Custom application setting: Load the OpenAI API key from the .env file.
+# This key is used for server-side API calls, like creating sessions and summarizing conversations.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-# Optional: realtime/session defaults via env
-# OPENAI_REALTIME_MODEL, OPENAI_REALTIME_VOICE, TRANSCRIBE_MODEL, ASSISTANT_INSTRUCTIONS
