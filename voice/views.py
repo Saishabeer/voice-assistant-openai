@@ -1,11 +1,9 @@
-# Save endpoint simplified: no is_closed/ended_reason/autosave_count; only upsert core fields and recompute analysis when content changes.
-"""Persist a single satisfaction_indicator and keep autosave + finalize behavior cleanly."""
+# Save endpoint: only upsert core fields (session_id, conversation, timestamps); analysis removed.
 from __future__ import annotations
 
 import json
 import logging
 import os
-from typing import Dict, List, Tuple
 from datetime import timedelta
 
 import httpx
@@ -16,7 +14,6 @@ from django.http import (
     HttpResponseServerError,
     JsonResponse,
 )
-    # ^ Make sure imports remain consistent
 from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -24,11 +21,9 @@ from django.views.decorators.http import require_GET, require_POST
 
 from . import constants as C
 from .models import Conversation
+from .services.convo import build_conversation_text
 
 logger = logging.getLogger(__name__)
-
-# Feature flag: disable analysis in dev/CI via ANALYZE_ENABLED=0
-ANALYZE_ENABLED = (os.getenv("ANALYZE_ENABLED", "1") != "0")
 
 
 def index(request: HttpRequest):
@@ -100,198 +95,6 @@ def realtime_session(request: HttpRequest):
         return HttpResponseServerError("Session creation failed")
 
 
-# ---------- Helpers: text, analysis, upsert ----------
-
-def _split_turns(text: str) -> List[str]:
-    """Split a multi-line transcript into simple per-line turns."""
-    if not text:
-        return []
-    lines = [ln.strip() for ln in text.split("\n")]
-    return [ln for ln in lines if ln]
-
-
-def _build_conversation_text(user_text: str, ai_text: str) -> str:
-    """Interleave user/AI turns into a single readable transcript column."""
-    u_turns = _split_turns(user_text)
-    a_turns = _split_turns(ai_text)
-    parts: List[str] = []
-    n = max(len(u_turns), len(a_turns))
-    for i in range(n):
-        if i < len(u_turns):
-            parts.append(f"User: {u_turns[i]}")
-        if i < len(a_turns):
-            parts.append(f"AI: {a_turns[i]}")
-    return "\n".join(parts)
-
-
-def _score_to_label(score) -> str:
-    mapping = {1: "very bad", 2: "bad", 3: "good", 4: "happy", 5: "excellent"}
-    try:
-        return mapping.get(int(score), "")
-    except Exception:
-        return ""
-
-
-def _format_satisfaction_indicator(score, label: str) -> str:
-    """Turn a score/label into '5 - Wow! Great experience' style indicator."""
-    score_int = None
-    try:
-        score_int = int(score) if score is not None else None
-    except Exception:
-        score_int = None
-    phrases = {
-        5: "Wow! Great experience",
-        4: "Happy",
-        3: "Good",
-        2: "Bad",
-        1: "Very bad",
-    }
-    if score_int:
-        phrase = phrases.get(score_int) or (label or _score_to_label(score_int)) or ""
-        return f"{score_int} - {phrase}".strip(" -")
-    return (label or "").strip()
-
-
-def _heuristic_structured(user_text: str, user_identifier: str, timestamp_iso: str) -> Dict:
-    """Very small heuristic fallback when analysis is disabled/unavailable."""
-    lt = (user_text or "").lower()
-    polite = any(p in lt for p in ["please", "thank", "sorry"])
-    urgent = any(p in lt for p in ["urgent", "asap", "now", "immediately"])
-    hesitant = any(p in lt for p in ["um", "uh", "maybe", "i guess"])
-    negative = any(p in lt for p in ["hate", "angry", "annoyed", "frustrated", "upset"])
-    sentiment = "negative" if negative else "neutral"
-    mood = "stressed" if urgent else ("hesitant" if hesitant else ("polite" if polite else "neutral"))
-    behavior = []
-    if polite: behavior.append("polite")
-    if urgent: behavior.append("urgent")
-    if hesitant: behavior.append("hesitant")
-    if negative: behavior.append("frustrated")
-    return {
-        "user": user_identifier or "anonymous",
-        "timestamp": timestamp_iso,
-        "satisfaction": {"score": 3, "label": "good"},  # sensible default midpoint
-        "sentiment": sentiment,
-        "mood": mood,
-        "behavior": behavior,
-        "risk_flags": [],
-        "summary": "Heuristic analysis only (no model or disabled).",
-    }
-
-
-def _structured_schema(name: str = "ConversationInsights") -> Dict:
-    """JSON Schema for strict structured output from the model (strict=True requires all keys)."""
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": name,
-            "strict": True,
-            "schema": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "user": {"type": "string"},
-                    "timestamp": {"type": "string", "format": "date-time"},
-                    "satisfaction": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "score": {"type": "integer", "minimum": 1, "maximum": 5},
-                            "label": {"type": "string", "enum": ["very bad", "bad", "good", "happy", "excellent"]},
-                        },
-                        "required": ["score", "label"],
-                    },
-                    "sentiment": {"type": "string", "enum": ["very negative", "negative", "neutral", "positive", "very positive"]},
-                    "mood": {"type": "string"},
-                    "behavior": {"type": "array", "items": {"type": "string"}},
-                    "risk_flags": {"type": "array", "items": {"type": "string"}},
-                    "summary": {"type": "string"},
-                },
-                "required": ["user", "timestamp", "satisfaction", "sentiment", "mood", "behavior", "risk_flags", "summary"],
-            },
-        },
-    }
-
-
-def _analyze_conversation_structured(
-    user_text: str,
-    ai_text: str,
-    user_identifier: str,
-    timestamp_iso: str,
-) -> Dict:
-    """Call provider for structured analysis (or fallback/disabled)."""
-    if not ANALYZE_ENABLED:
-        return _heuristic_structured(user_text, user_identifier, timestamp_iso)
-
-    api_key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
-    model = os.environ.get("OPENAI_SUMMARY_MODEL", C.DEFAULT_SUMMARY_MODEL)
-    if not api_key:
-        logger.warning("OPENAI_API_KEY missing; using heuristic structured summary")
-        return _heuristic_structured(user_text, user_identifier, timestamp_iso)
-
-    system_prompt = (
-        "Given the user's transcript and the assistant's reply text, produce a structured analysis. "
-        "Use the provided JSON schema strictly. Be concise and evidence-based."
-    )
-    user_payload_text = (
-        f"User identifier: {user_identifier or 'anonymous'}\n"
-        f"Conversation time (server): {timestamp_iso}\n\n"
-        f"User Transcript:\n{user_text}\n\nAssistant Transcript:\n{ai_text}"
-    )
-
-    payload = {
-        "model": model,
-        "response_format": _structured_schema(),
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_payload_text},
-        ],
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    url = C.get_chat_completions_url()
-
-    try:
-        with httpx.Client(timeout=40) as client:
-            resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code != 200:
-            logger.error("Structured analysis API error (%s): %s", resp.status_code, resp.text)
-            return _heuristic_structured(user_text, user_identifier, timestamp_iso)
-
-        data = resp.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        try:
-            structured = json.loads(content) if content else {}
-        except Exception:
-            start, end = content.find("{"), content.rfind("}")
-            structured = json.loads(content[start: end + 1]) if start != -1 and end != -1 else {}
-        if not isinstance(structured, dict) or "satisfaction" not in structured:
-            return _heuristic_structured(user_text, user_identifier, timestamp_iso)
-        return structured
-    except Exception:
-        logger.exception("Structured analysis generation failed")
-        return _heuristic_structured(user_text, user_identifier, timestamp_iso)
-
-
-def _extract_satisfaction(structured: Dict) -> Tuple[int | None, str]:
-    """Extract score/label defensively."""
-    try:
-        sat = structured.get("satisfaction") or {}
-        score = sat.get("score")
-        label = sat.get("label") or _score_to_label(score)
-        return score, label
-    except Exception:
-        return None, ""
-
-
-def _content_changed(old_text: str, new_text: str) -> bool:
-    """Decide whether to re-run analysis to avoid waste on tiny deltas."""
-    if not old_text and new_text:
-        return True
-    if not new_text:
-        return False
-    return abs(len(new_text) - len(old_text)) > 40 or new_text not in old_text
-
-
 def _find_recent_conversation(session_id: str) -> Conversation | None:
     """Get the most recent conversation for this session in the last 45 minutes."""
     if not session_id:
@@ -307,8 +110,6 @@ def _find_recent_conversation(session_id: str) -> Conversation | None:
     except Exception:
         return None
 
-
-# ---------- Main save endpoint ----------
 
 @csrf_exempt
 @require_POST
@@ -329,7 +130,6 @@ def save_conversation(request: HttpRequest):
         "status": "ok",
         "id": <int>,
         "session_id": "...",
-        "satisfaction_indicator": "...",
         "created_at": "...",
         "updated_at": "...",
         "last_activity": "..."
@@ -345,7 +145,7 @@ def save_conversation(request: HttpRequest):
     session_id = (data.get("session_id") or "").strip()
     provided_id = data.get("conversation_id")
 
-    conversation_text = _build_conversation_text(user_text, ai_text)
+    conversation_text = build_conversation_text(user_text, ai_text)
     now = timezone.now()
 
     # Target: explicit id > recent by session > new
@@ -368,43 +168,28 @@ def save_conversation(request: HttpRequest):
         created = True
 
     # Merge and update
-    changed = _content_changed(convo.conversation or "", conversation_text or "")
     convo.conversation = conversation_text or convo.conversation
     convo.last_activity = now
-
-    # Only analyze if new row or content meaningfully changed
-    if created or changed:
-        user_identifier = session_id or "anonymous"
-        timestamp_iso = (convo.created_at or now).isoformat()
-        structured = _analyze_conversation_structured(user_text, ai_text, user_identifier, timestamp_iso)
-        convo.structured = structured
-        try:
-            convo.summary = (structured.get("summary") or "").strip() if isinstance(structured, dict) else convo.summary
-            score, label = _extract_satisfaction(structured if isinstance(structured, dict) else {})
-            convo.satisfaction_indicator = _format_satisfaction_indicator(score, label) or convo.satisfaction_indicator
-        except Exception:
-            logger.warning("Failed to derive fields from structured analysis")
 
     # Persist
     try:
         if created:
             convo.save()
         else:
-            convo.save(update_fields=["conversation", "last_activity", "structured", "summary", "satisfaction_indicator", "updated_at"])
+            convo.save(update_fields=["conversation", "last_activity", "updated_at"])
     except Exception:
         logger.exception("Failed to save conversation")
         return HttpResponseServerError("Failed to save conversation")
 
     logger.info(
-        "Conversation upserted | id=%s session=%s changed=%s",
-        convo.id, convo.session_id, changed
+        "Conversation upserted | id=%s session=%s",
+        convo.id, convo.session_id
     )
 
     return JsonResponse({
         "status": "ok",
         "id": convo.id,
         "session_id": convo.session_id,
-        "satisfaction_indicator": convo.satisfaction_indicator or "",
         "created_at": (convo.created_at or now).isoformat(),
         "updated_at": (convo.updated_at or now).isoformat(),
         "last_activity": (convo.last_activity or now).isoformat(),

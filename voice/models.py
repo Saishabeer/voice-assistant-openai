@@ -15,13 +15,6 @@ class Conversation(models.Model):
     # Human-readable transcript (interleaved: "User: ...\nAI: ...")
     conversation = models.TextField(blank=True, default="")
 
-    # Derived fields
-    summary = models.TextField(blank=True, default="")
-    # Single satisfaction text like "5 - Wow! Great experience"
-    satisfaction_indicator = models.CharField(max_length=120, blank=True, default="")
-    # Structured JSON insights (sentiment, mood, etc.)
-    structured = models.JSONField(null=True, blank=True)
-
     class Meta:
         # Show most active first
         ordering = ["-last_activity", "-id"]

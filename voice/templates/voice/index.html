@@ -32,6 +32,7 @@
   </div>
 </div>
 
-<script src="{% static 'voice/app.js' %}"></script>
+<!-- Defer guarantees the DOM exists before app.js runs -->
+<script src="{% static 'voice/app.js' %}" defer></script>
 </body>
 </html>
