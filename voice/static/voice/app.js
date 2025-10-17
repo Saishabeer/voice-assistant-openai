@@ -1,53 +1,3 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Live AI Voice Assist (OpenAI Realtime)</title>
-  <style>
-    :root { --bg:#0f1115; --panel:#161a22; --text:#e6e9ef; --muted:#9aa4b2; --accent:#3b82f6; --border:#222837; }
-    html, body { height:100%; }
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin:0; background:#0f1115; color:var(--text); }
-    .container { max-width: 980px; margin: 32px auto; padding: 0 20px; }
-    #controls { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
-    #controls button { padding:10px 14px; border-radius:10px; border:1px solid var(--border); background:#1a2230; color:var(--text); cursor:pointer; }
-    #controls button[disabled] { opacity:.5; cursor:not-allowed; }
-    #status { color: var(--muted); font-size:.95em; margin-left:6px; }
-    .row { display:flex; gap:18px; align-items:stretch; }
-    .col { flex:1; min-width:280px; }
-    .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px; min-height:180px; }
-    .label { font-weight:600; margin-bottom:8px; color:#b6c2d0; }
-    #userTranscript, #aiTranscript { white-space:pre-wrap; min-height:130px; }
-    audio { width:100%; margin-top:6px; }
-    .muted { color:var(--muted); }
-  </style>
-</head>
-<body>
-<div class="container">
-  <h1>Live AI Voice Assist</h1>
-  <div id="controls">
-    <button id="startBtn">Start</button>
-    <button id="stopBtn" disabled>Stop</button>
-    <span id="status">Idle</span>
-  </div>
-
-  <div class="row">
-    <div class="col">
-      <div class="panel">
-        <div class="label">You (live transcription)</div>
-        <div id="userTranscript" class="muted">Speak after you click Start…</div>
-      </div>
-    </div>
-    <div class="col">
-      <div class="panel">
-        <div class="label">Assistant (text)</div>
-        <div id="aiTranscript" class="muted">The assistant will respond here.</div>
-        <audio id="aiAudio" autoplay playsinline></audio>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
 (function(){
   // DOM and state
   const startBtn = document.getElementById("startBtn");
@@ -94,9 +44,7 @@
     try {
       eventsDC.send(JSON.stringify({
         type: "response.create",
-        response: {
-          instructions: text
-        }
+        response: { instructions: text }
       }));
       return true;
     } catch (e) {
@@ -109,9 +57,8 @@
   function armGreetAndStopFallback() {
     if (greetTimeoutHandle) clearTimeout(greetTimeoutHandle);
     greetTimeoutHandle = setTimeout(() => {
-      // Fallback: stop even if we didn't see response.completed
       stop({ skipSave: true });
-    }, 4000); // 4s fallback
+    }, 4000);
   }
 
   // End-of-convo heuristics (purchase complete or user exit intent)
@@ -124,9 +71,7 @@
       (async () => {
         setStatus("Finalizing…");
         finalized = true;
-        // Save and close
         await saveConversation({ autosave: true, reason: "end_detected", close: true });
-        // Greet then stop after response.completed or timeout
         greetingPending = sendClosingMessage("end_detected");
         if (greetingPending) armGreetAndStopFallback();
         else stop({ skipSave: true });
@@ -171,9 +116,7 @@
         (async () => {
           setStatus("Finalizing…");
           finalized = true;
-          // Save and close
           await saveConversation({ autosave: true, reason, close: true });
-          // Greet then stop after response.completed or timeout
           greetingPending = sendClosingMessage(reason);
           if (greetingPending) armGreetAndStopFallback();
           else stop({ skipSave: true });
@@ -400,7 +343,3 @@
     } catch {}
   });
 })();
-</script>
-</body>
-</html>
-
