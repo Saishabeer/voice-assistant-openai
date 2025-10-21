@@ -66,11 +66,15 @@ WSGI_APPLICATION = "live_assist.wsgi.application"
 # ASGI entry-point for asynchronous web servers (used by Django Channels for WebSockets, if enabled).
 ASGI_APPLICATION = "live_assist.asgi.application"
 
-# Database configuration. This project uses a simple SQLite database.
+# Database configuration: PostgreSQL (credentials loaded from .env)
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("POSTGRES_DB", "voice_db"),
+        "USER": os.environ.get("POSTGRES_USER", "voice_user"),
+        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+        "HOST": os.environ.get("POSTGRES_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
     }
 }
 

@@ -1,10 +1,10 @@
-# Save endpoint: only upsert core fields (session_id, conversation, timestamps); analysis removed.
+# Views: start realtime session, save conversation, and save analysis on finalize.
 from __future__ import annotations
 
 import json
 import logging
 import os
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 
 import httpx
 from django.conf import settings
@@ -20,8 +20,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import constants as C
-from .models import Conversation
+from .models import Conversation, ConversationAnalysis
 from .services.convo import build_conversation_text
+from .services.analysis import analyze_conversation_via_openai
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,15 @@ def realtime_session(request: HttpRequest):
     voice = os.environ.get("OPENAI_REALTIME_VOICE", C.DEFAULT_VOICE)
     transcribe_model = os.environ.get("TRANSCRIBE_MODEL", C.DEFAULT_TRANSCRIBE_MODEL)
 
-    # Persona + when to trigger finalize tool (frontend handles greeting/stop)
+    # Persona + tool usage policy: trigger finalize_conversation on end intent and stop output.
+    # Also instruct the model that the client will perform a post-call summary via API.
     tool_directive = (
-        "When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
-        "'that's all', 'no thanks', 'bye', 'end the conversation'), call finalize_conversation with a short 'reason'."
+        "End-of-conversation policy:\n"
+        "- When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
+        "'that's all', 'we are done', 'no thanks', 'bye', 'end the conversation', 'stop now', 'that's it'), "
+        "IMMEDIATELY call the tool finalize_conversation with a brief 'reason' summarizing their intent.\n"
+        "- After calling the tool, do not ask further questions or continue the conversation. "
+        "Stop producing any further content; the client will handle closing and will run a post-call summary."
     )
     instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{tool_directive}"
 
@@ -54,10 +60,15 @@ def realtime_session(request: HttpRequest):
         {
             "type": "function",
             "name": "finalize_conversation",
-            "description": "Persist final state when the user is ready to end the conversation.",
+            "description": "Persist final state when the user is ready to end the conversation. The client will end the call.",
             "parameters": {
                 "type": "object",
-                "properties": {"reason": {"type": "string", "description": "Why the session is finishing"}},
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the session is finishing (e.g., 'purchase completed', 'user said bye')."
+                    }
+                },
                 "required": ["reason"],
                 "additionalProperties": False,
             },
@@ -116,19 +127,23 @@ def _find_recent_conversation(session_id: str) -> Conversation | None:
 def save_conversation(request: HttpRequest):
     """
     Upsert conversation row (single record per active session).
+    If finalize=true, run OpenAI analysis and store summary/satisfaction in DB.
 
     Body:
       {
         "session_id": "...",
         "user_text": "...",
         "ai_text": "...",
-        "conversation_id": 123?   # optional if known by the client
+        "conversation_id": 123?,    # optional if known by the client
+        "finalize": true?,          # when true, server runs analysis via OpenAI and stores it
+        "reason": "user said bye"?  # optional metadata; not stored server-side
       }
 
     Returns:
       {
         "status": "ok",
-        "id": <int>,
+        "id": <int>,               # conversation id
+        "analysis_id": <int|null>, # created analysis row if any
         "session_id": "...",
         "created_at": "...",
         "updated_at": "...",
@@ -144,6 +159,7 @@ def save_conversation(request: HttpRequest):
     ai_text = (data.get("ai_text") or "").strip()
     session_id = (data.get("session_id") or "").strip()
     provided_id = data.get("conversation_id")
+    finalize = bool(data.get("finalize", False))
 
     conversation_text = build_conversation_text(user_text, ai_text)
     now = timezone.now()
@@ -171,7 +187,7 @@ def save_conversation(request: HttpRequest):
     convo.conversation = conversation_text or convo.conversation
     convo.last_activity = now
 
-    # Persist
+    # Persist transcript
     try:
         if created:
             convo.save()
@@ -181,14 +197,42 @@ def save_conversation(request: HttpRequest):
         logger.exception("Failed to save conversation")
         return HttpResponseServerError("Failed to save conversation")
 
-    logger.info(
-        "Conversation upserted | id=%s session=%s",
-        convo.id, convo.session_id
-    )
+    analysis_id = None
+
+    # If finalize requested, call OpenAI to get structured JSON and store it
+    if finalize:
+        try:
+            parsed, raw_payload = analyze_conversation_via_openai(convo.conversation)
+            # Extract and save analysis row
+            ts_str = parsed.get("timestamp")
+            ts_dt = None
+            try:
+                # ISO 8601 expected
+                ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str else datetime.now(timezone.utc)
+            except Exception:
+                ts_dt = datetime.now(timezone.utc)
+
+            analysis = ConversationAnalysis.objects.create(
+                conversation=convo,
+                summary=parsed["summary"],
+                satisfaction_rating=int(parsed["satisfaction_level"]["rating"]),
+                satisfaction_label=str(parsed["satisfaction_level"]["label"]),
+                user_behavior=parsed["user_behavior"],
+                conversation_topic=parsed["conversation_topic"],
+                feedback_summary=parsed["feedback_summary"],
+                analysis_timestamp=ts_dt,
+                raw_json=parsed,
+                raw_response=raw_payload,  # NEW: store full raw API response
+            )
+            analysis_id = analysis.id
+            logger.info("Analysis saved | conversation_id=%s analysis_id=%s", convo.id, analysis_id)
+        except Exception:
+            logger.exception("Failed to run/store conversation analysis")
 
     return JsonResponse({
         "status": "ok",
         "id": convo.id,
+        "analysis_id": analysis_id,
         "session_id": convo.session_id,
         "created_at": (convo.created_at or now).isoformat(),
         "updated_at": (convo.updated_at or now).isoformat(),

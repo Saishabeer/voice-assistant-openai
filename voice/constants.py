@@ -52,14 +52,12 @@ RISHI_SYSTEM_INSTRUCTION = '''You are **Rishi**, a professional AI salesperson f
 - End interactions with a clear next step.'''
 
 # Defaults (can be overridden with env vars)
-DEFAULT_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-4o-realtime-preview")
+# Prefer a pinned preview by default; env OPENAI_REALTIME_MODEL will override this.
+DEFAULT_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-4o-realtime-preview-2024-12-17")
 DEFAULT_VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "verse")
 # Ultra-fast STT; set to "whisper-1" for Whisper accuracy
 DEFAULT_TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
 DEFAULT_MODALITIES = ["text", "audio"]
-
-# Summarization model (fast, cheap)
-DEFAULT_SUMMARY_MODEL = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
 
 # OpenAI API config
 OPENAI_BETA_HEADER_VALUE = "realtime=v1"
@@ -71,6 +69,6 @@ def get_realtime_session_url() -> str:
     return f"{OPENAI_BASE_URL}/v1/realtime/sessions"
 
 
-def get_chat_completions_url() -> str:
-    """Chat Completions endpoint (used for summary)."""
-    return f"{OPENAI_BASE_URL}/v1/chat/completions"
+def get_responses_url() -> str:
+    """Responses API endpoint (recommended for JSON schema outputs)."""
+    return f"{OPENAI_BASE_URL}/v1/responses"

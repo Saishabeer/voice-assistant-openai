@@ -298,6 +298,7 @@
         autosave: !!options.autosave,
         reason: options.reason || (options.autosave ? "autosave" : "manual"),
         close: !!options.close,
+        finalize: !!options.close, // trigger server-side analysis on final save
       };
       if (conversationId != null) payload.conversation_id = conversationId;
 
@@ -378,6 +379,7 @@
           autosave: true,
           reason: "beforeunload",
           close: !finalized,
+          finalize: !finalized,
         };
         if (conversationId != null) data.conversation_id = conversationId;
         if (navigator.sendBeacon) {
