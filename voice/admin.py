@@ -1,6 +1,6 @@
-# Clean admin: show only the important fields and a preview of the transcript.
+# Clean admin: show transcript, analysis fields, and JSON payloads.
 from django.contrib import admin
-from .models import Conversation, ConversationAnalysis
+from .models import Conversation
 
 
 @admin.register(Conversation)
@@ -16,24 +16,27 @@ class ConversationAdmin(admin.ModelAdmin):
         "updated_at",
         "last_activity",
         "session_id",
+        "satisfaction_rating",
+        "satisfaction_label",
+        "conversation_topic",
         "short_conversation",
     )
-    list_filter = ("created_at", "last_activity")
-    search_fields = ("session_id", "conversation")
+    list_filter = ("created_at", "last_activity", "satisfaction_rating", "satisfaction_label")
+    search_fields = ("session_id", "conversation", "summary", "conversation_topic", "satisfaction_label")
     ordering = ("-last_activity",)
-    readonly_fields = ("created_at", "updated_at", "last_activity")
+    readonly_fields = ("created_at", "updated_at", "last_activity", "raw_json", "raw_response")
     fields = (
         "session_id",
         "conversation",
+        "summary",
+        ("satisfaction_rating", "satisfaction_label"),
+        "user_behavior",
+        "conversation_topic",
+        "feedback_summary",
+        "analysis_timestamp",
+        "raw_json",
+        "raw_response",
         "created_at",
         "updated_at",
         "last_activity",
     )
-
-
-@admin.register(ConversationAnalysis)
-class ConversationAnalysisAdmin(admin.ModelAdmin):
-    list_display = ("id", "conversation", "satisfaction_rating", "satisfaction_label", "analysis_timestamp", "created_at")
-    list_filter = ("satisfaction_rating", "satisfaction_label")
-    search_fields = ("conversation__session_id", "summary", "user_behavior", "conversation_topic")
-    readonly_fields = ("raw_json", "raw_response")

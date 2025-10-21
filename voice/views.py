@@ -20,7 +20,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from . import constants as C
-from .models import Conversation, ConversationAnalysis
+from .models import Conversation
 from .services.convo import build_conversation_text
 from .services.analysis import analyze_conversation_via_openai
 
@@ -44,8 +44,6 @@ def realtime_session(request: HttpRequest):
     voice = os.environ.get("OPENAI_REALTIME_VOICE", C.DEFAULT_VOICE)
     transcribe_model = os.environ.get("TRANSCRIBE_MODEL", C.DEFAULT_TRANSCRIBE_MODEL)
 
-    # Persona + tool usage policy: trigger finalize_conversation on end intent and stop output.
-    # Also instruct the model that the client will perform a post-call summary via API.
     tool_directive = (
         "End-of-conversation policy:\n"
         "- When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
@@ -98,8 +96,7 @@ def realtime_session(request: HttpRequest):
 
         if resp.status_code != 200:
             logger.error("OpenAI session error (%s): %s", resp.status_code, resp.text)
-            return HttpResponseServerError(f"OpenAI session error: {resp.text}")
-
+            return HttpResponseServerError("Failed to create session")
         return JsonResponse(resp.json())
     except Exception:
         logger.exception("Session creation failed")
@@ -127,33 +124,12 @@ def _find_recent_conversation(session_id: str) -> Conversation | None:
 def save_conversation(request: HttpRequest):
     """
     Upsert conversation row (single record per active session).
-    If finalize=true, run OpenAI analysis and store summary/satisfaction in DB.
-
-    Body:
-      {
-        "session_id": "...",
-        "user_text": "...",
-        "ai_text": "...",
-        "conversation_id": 123?,    # optional if known by the client
-        "finalize": true?,          # when true, server runs analysis via OpenAI and stores it
-        "reason": "user said bye"?  # optional metadata; not stored server-side
-      }
-
-    Returns:
-      {
-        "status": "ok",
-        "id": <int>,               # conversation id
-        "analysis_id": <int|null>, # created analysis row if any
-        "session_id": "...",
-        "created_at": "...",
-        "updated_at": "...",
-        "last_activity": "..."
-      }
+    If finalize=true, run OpenAI analysis and store summary/satisfaction on the same Conversation row.
     """
     try:
         data = json.loads(request.body.decode("utf-8") or "{}")
     except Exception:
-        return HttpResponseBadRequest("Invalid JSON")
+        return HttpResponseServerError("Invalid JSON")
 
     user_text = (data.get("user_text") or "").strip()
     ai_text = (data.get("ai_text") or "").strip()
@@ -183,11 +159,11 @@ def save_conversation(request: HttpRequest):
         )
         created = True
 
-    # Merge and update
+    # Merge and update transcript
     convo.conversation = conversation_text or convo.conversation
     convo.last_activity = now
 
-    # Persist transcript
+    # Persist transcript first
     try:
         if created:
             convo.save()
@@ -197,44 +173,53 @@ def save_conversation(request: HttpRequest):
         logger.exception("Failed to save conversation")
         return HttpResponseServerError("Failed to save conversation")
 
-    analysis_id = None
-
-    # If finalize requested, call OpenAI to get structured JSON and store it
+    # If finalize requested, call OpenAI to get structured JSON and store it on this row
     if finalize:
         try:
             parsed, raw_payload = analyze_conversation_via_openai(convo.conversation)
-            # Extract and save analysis row
-            ts_str = parsed.get("timestamp")
-            ts_dt = None
+            ts_str = parsed.get("timestamp") or ""
             try:
-                # ISO 8601 expected
                 ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str else datetime.now(timezone.utc)
             except Exception:
                 ts_dt = datetime.now(timezone.utc)
 
-            analysis = ConversationAnalysis.objects.create(
-                conversation=convo,
-                summary=parsed["summary"],
-                satisfaction_rating=int(parsed["satisfaction_level"]["rating"]),
-                satisfaction_label=str(parsed["satisfaction_level"]["label"]),
-                user_behavior=parsed["user_behavior"],
-                conversation_topic=parsed["conversation_topic"],
-                feedback_summary=parsed["feedback_summary"],
-                analysis_timestamp=ts_dt,
-                raw_json=parsed,
-                raw_response=raw_payload,  # NEW: store full raw API response
-            )
-            analysis_id = analysis.id
-            logger.info("Analysis saved | conversation_id=%s analysis_id=%s", convo.id, analysis_id)
+            convo.summary = parsed.get("summary", "") or ""
+            level = parsed.get("satisfaction_level") or {}
+            convo.satisfaction_rating = int(level.get("rating")) if level.get("rating") is not None else None
+            convo.satisfaction_label = str(level.get("label") or "")
+            convo.user_behavior = parsed.get("user_behavior", "") or ""
+            convo.conversation_topic = parsed.get("conversation_topic", "") or ""
+            convo.feedback_summary = parsed.get("feedback_summary", "") or ""
+            convo.analysis_timestamp = ts_dt
+            convo.raw_json = parsed
+            convo.raw_response = raw_payload
+            convo.save(update_fields=[
+                "summary",
+                "satisfaction_rating",
+                "satisfaction_label",
+                "user_behavior",
+                "conversation_topic",
+                "feedback_summary",
+                "analysis_timestamp",
+                "raw_json",
+                "raw_response",
+                "updated_at",
+            ])
+            logger.info("Analysis saved on conversation | id=%s rating=%s", convo.id, convo.satisfaction_rating)
         except Exception:
             logger.exception("Failed to run/store conversation analysis")
 
     return JsonResponse({
         "status": "ok",
         "id": convo.id,
-        "analysis_id": analysis_id,
         "session_id": convo.session_id,
         "created_at": (convo.created_at or now).isoformat(),
         "updated_at": (convo.updated_at or now).isoformat(),
         "last_activity": (convo.last_activity or now).isoformat(),
+        # Return analysis snapshot (may be empty if not finalized or if analysis failed)
+        "summary": convo.summary,
+        "satisfaction_rating": convo.satisfaction_rating,
+        "satisfaction_label": convo.satisfaction_label,
+        "conversation_topic": convo.conversation_topic,
+        "analysis_timestamp": convo.analysis_timestamp.isoformat() if convo.analysis_timestamp else None,
     })
