@@ -2,9 +2,9 @@
 
 <div align="center">
 
-# 🎙️ Live AI Voice Assistant ⚡
+# 🎙️ Conversational AI Sales Agent ⚡
 
-**A real-time, browser-based voice transcription tool powered by Django and OpenAI's Whisper API.**
+**A real-time, browser-based conversational AI agent featuring a sales persona, powered by Django and OpenAI's next-generation Realtime API.**
 
 </div>
 
@@ -12,7 +12,7 @@
   <img alt="Python" src="https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white">
   <img alt="Django" src="https://img.shields.io/badge/Django-4.2-092E20?logo=django&logoColor=white">
   <img alt="JavaScript" src="https://img.shields.io/badge/JavaScript-ES6-F7DF1E?logo=javascript&logoColor=black">
-  <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-Whisper-412991?logo=openai&logoColor=white">
+  <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-GPT--4o-412991?logo=openai&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-yellow.svg">
 </p>
 
@@ -23,22 +23,22 @@
 
 ## ✨ Key Features
 
-*   **Live Transcription**: Captures microphone audio directly in the browser and displays the transcript in real-time.
-*   **Low-Latency Streaming**: Uses **WebSockets** for an efficient, near-instant connection between your browser and the server.
-*   **High-Accuracy ASR**: Leverages **OpenAI's Whisper API** for state-of-the-art speech-to-text conversion.
-*   **Simple & Modern Stack**: Built with **Python/Django** on the backend and vanilla **HTML/CSS/JS** on the frontend.
+*   **🤖 Conversational AI Persona**: Features a pre-defined AI salesperson persona ("Rishi") capable of understanding needs, recommending services, and guiding users.
+*   **⚡ Real-time, Two-Way Audio**: Utilizes **OpenAI's Realtime API** for low-latency transcription and simultaneous audio response generation.
+*   **🔌 WebSocket Streaming**: Employs **Django Channels** for a persistent, efficient connection between the browser and the server.
+*   **🛠️ Advanced Tool Integration**: Includes sophisticated logic for conversation management, such as detecting user intent to end the session.
 
 ## 🚀 How It Works
 
 The process is a simple, elegant loop:
 
-**Browser (Client)** `->` **Django (Server)** `->` **OpenAI (API)** `->` **Django (Server)** `->` **Browser (Client)**
+**Browser (Client)** `<- WebSocket ->` **Django (Server)** `<-- Realtime Session -->` **OpenAI API**
 
-1.  **Capture**: The browser records 1-second audio chunks using the `MediaRecorder` API.
-2.  **Stream**: Each chunk is sent to the Django server via a WebSocket.
-3.  **Transcribe**: The server forwards the audio to the OpenAI Whisper API.
-4.  **Return**: OpenAI sends the transcript text back to the server.
-5.  **Display**: The server pushes the text back to the browser, which appends it to the page.
+1.  **Session Start**: The browser connects to the Django server via a WebSocket.
+2.  **Realtime Session**: Django initiates a `Realtime Session` with the OpenAI API, configured with the "Rishi" persona and tool directives.
+3.  **Audio Streaming**: The browser captures user audio and streams it to the Django server.
+4.  **AI Processing**: Django forwards the audio to the OpenAI session, which handles transcription, AI reasoning, and generating a spoken response.
+5.  **Response Streaming**: OpenAI streams the AI's audio response back to Django, which immediately forwards it to the browser for playback.
 
 ## 📂 Project Structure
 
@@ -57,6 +57,7 @@ live-assist/
 ├── templates/          # HTML templates
 └── voice/              # Django app for voice handling
     ├── consumers.py    # WebSocket consumer for audio stream
+    ├── constants.py    # AI prompts, models, and API endpoints
     ├── routing.py      # WebSocket URL routing
     └── views.py        # Renders the main HTML page
 ```
