@@ -53,26 +53,33 @@ RISHI_SYSTEM_INSTRUCTION = '''You are **Rishi**, a professional AI salesperson f
 
 # End-of-conversation tool directive used in realtime_session
 TOOL_DIRECTIVE = (
-    "End-of-conversation policy:\n"
-    "- When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
-    "'that's all', 'we are done', 'no thanks', 'bye', 'end the conversation', 'stop now', 'that's it'):\n"
-    "  1) Politely confirm: 'Are you sure you want to end the conversation?'\n"
-    "  2) If the user confirms, IMMEDIATELY call the tool finalize_conversation with a brief 'reason' summarizing their intent.\n"
-    "- After calling the tool, do not ask further questions or continue the conversation. "
-    "Stop producing any further content; the client will handle closing and will run a post-call summary.\n"
-    "- End with a friendly closing message such as: 'Thank you for your patience. We hope you enjoyed our service.'"
+    "End-of-conversation (strict confirmation required):\n"
+    "- Detect stop intent (e.g., 'stop now', 'bye', 'we are done', 'that's all', 'end the conversation', "
+    "'no thanks', 'purchase completed', 'order confirmed').\n"
+    "Step A — Ask (this turn only): Ask once: \"Are you sure you want to end the conversation?\" "
+    "Do NOT call any tools in the same turn as this question.\n"
+    "Step B — Wait (next user turn): Proceed only on an explicit YES in the NEXT user turn. Accept short confirmations like "
+    "'yes', 'y', 's', 'ok', or 'okay' (or equivalents such as 'confirm', 'go ahead', 'that's fine'). If the user says NO "
+    "or is unclear (e.g., 'no', 'not yet', 'wait', 'hold on', 'continue'), do NOT end; explicitly continue helping. Do not call tools.\n"
+    "Step C — Finalize (only after YES): Call finalize_conversation with { confirmed: true, reason: '<brief intent>' }.\n"
+    "Step D — Close: After the tool call, send exactly one friendly thank-you line (in the user’s language if possible), "
+    "for example: \"Thank you for your patience and for using our service. Have a great day!\" Then stop speaking.\n"
+    "Never end or say goodbye without BOTH (1) a clear YES in the next user turn and (2) calling finalize_conversation "
+    "with confirmed=true. Do not close the session yourself; the client will handle closing."
 )
 
 # Defaults (can be overridden with env vars)
-# Prefer a pinned preview by default; env OPENAI_REALTIME_MODEL will override this.
 DEFAULT_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-4o-realtime-preview-2024-12-17")
 DEFAULT_VOICE = os.environ.get("OPENAI_REALTIME_VOICE", "verse")
-# Ultra-fast STT; set to "whisper-1" for Whisper accuracy
 DEFAULT_TRANSCRIBE_MODEL = os.environ.get("TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
 DEFAULT_MODALITIES = ["text", "audio"]
 
+# Summarization/default analysis model
+DEFAULT_SUMMARY_MODEL = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
+
 # OpenAI API config
-OPENAI_BETA_HEADER_VALUE = "realtime=v1"
+OPENAI_BETA_HEADER_VALUE = "realtime=v1"  # Realtime sessions
+RESPONSES_BETA_HEADER = "responses-2024-12-17"  # Responses API beta flag
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com").rstrip("/")
 
 

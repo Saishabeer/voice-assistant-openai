@@ -8,11 +8,7 @@ from typing import Any, Dict, Tuple
 
 import httpx
 from django.conf import settings
-from voice.constants import get_responses_url  # file://C:/Users/saish/Desktop/voice%20assist/voice/constants.py#get_responses_url
-
-# Default model can be overridden via env
-DEFAULT_SUMMARY_MODEL = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
-
+from voice import constants as C  # centralized defaults and endpoints
 
 def _get_api_key() -> str:
     key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
@@ -75,13 +71,11 @@ def _responses_request(api_key: str, model: str, transcript: str) -> Tuple[Dict[
     )
 
     json_schema = _build_json_schema()
-    url = get_responses_url()
+    url = C.get_responses_url()
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        # Current Responses API requires an opt-in header; adjust value as needed if OpenAI updates it.
-        # If your account/SDK doesn't require this, it won't hurt to include.
-        "OpenAI-Beta": "responses-2024-12-17",
+        "OpenAI-Beta": C.RESPONSES_BETA_HEADER,
     }
     payload = {
         "model": model,
@@ -189,7 +183,7 @@ def analyze_conversation_via_openai(conversation_text: str, model: str | None = 
     """
     transcript = (conversation_text or "").strip()
     api_key = (getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY", "")).strip()
-    model = (model or DEFAULT_SUMMARY_MODEL).strip() or "gpt-4o-mini"
+    model = (model or C.DEFAULT_SUMMARY_MODEL).strip() or "gpt-4o-mini"
 
     if not transcript:
         # Empty transcript → short-circuit to local fallback

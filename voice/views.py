@@ -50,16 +50,20 @@ def realtime_session(request: HttpRequest):
         {
             "type": "function",
             "name": "finalize_conversation",
-            "description": "Persist final state when the user is ready to end the conversation. The client will end the call.",
+            "description": "Persist final state when the user is ready to end the conversation. The client will end the call only when confirmed=true.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "reason": {
                         "type": "string",
                         "description": "Why the session is finishing (e.g., 'purchase completed', 'user said bye')."
-                    }
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Set to true only if the user explicitly confirmed they want to end now."
+                    },
                 },
-                "required": ["reason"],
+                "required": ["reason", "confirmed"],
                 "additionalProperties": False,
             },
         }
@@ -116,7 +120,8 @@ def _find_recent_conversation(session_id: str) -> Conversation | None:
 def save_conversation(request: HttpRequest):
     """
     Upsert conversation row (single record per active session).
-    If finalize=true, run OpenAI analysis and store summary/satisfaction on the same Conversation row.
+    If finalize=true AND confirmed=true, run OpenAI analysis and store summary/satisfaction on the same Conversation row.
+    Otherwise, ignore finalize and continue the session.
     """
     try:
         data = json.loads(request.body.decode("utf-8") or "{}")
@@ -128,6 +133,7 @@ def save_conversation(request: HttpRequest):
     session_id = (data.get("session_id") or "").strip()
     provided_id = data.get("conversation_id")
     finalize = bool(data.get("finalize", False))
+    confirmed = bool(data.get("confirmed", False))  # NEW: require explicit confirmation
 
     conversation_text = build_conversation_text(user_text, ai_text)
     now = timezone.now()
@@ -165,8 +171,10 @@ def save_conversation(request: HttpRequest):
         logger.exception("Failed to save conversation")
         return HttpResponseServerError("Failed to save conversation")
 
-    # If finalize requested, call OpenAI to get structured JSON and store it on this row
-    if finalize:
+    did_finalize = False
+
+    # Finalize strictly only if confirmed
+    if finalize and confirmed:
         try:
             parsed, raw_payload = analyze_conversation_via_openai(convo.conversation)
             ts_str = parsed.get("timestamp") or ""
@@ -197,7 +205,8 @@ def save_conversation(request: HttpRequest):
                 "raw_response",
                 "updated_at",
             ])
-            logger.info("Analysis saved on conversation | id=%s rating=%s", convo.id, convo.satisfaction_rating)
+            did_finalize = True
+            logger.info("Finalized conversation | id=%s rating=%s", convo.id, convo.satisfaction_rating)
         except Exception:
             logger.exception("Failed to run/store conversation analysis")
 
@@ -208,6 +217,7 @@ def save_conversation(request: HttpRequest):
         "created_at": (convo.created_at or now).isoformat(),
         "updated_at": (convo.updated_at or now).isoformat(),
         "last_activity": (convo.last_activity or now).isoformat(),
+        "finalized": did_finalize,  # NEW: let the client know whether server finalized
         # Return analysis snapshot (maybe empty if not finalized or if analysis failed)
         "summary": convo.summary,
         "satisfaction_rating": convo.satisfaction_rating,
