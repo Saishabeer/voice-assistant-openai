@@ -51,6 +51,18 @@ RISHI_SYSTEM_INSTRUCTION = '''You are **Rishi**, a professional AI salesperson f
 - If customer asks about cost, timeline, or integration → recommend demo booking.
 - End interactions with a clear next step.'''
 
+# End-of-conversation tool directive used in realtime_session
+TOOL_DIRECTIVE = (
+    "End-of-conversation policy:\n"
+    "- When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
+    "'that's all', 'we are done', 'no thanks', 'bye', 'end the conversation', 'stop now', 'that's it'):\n"
+    "  1) Politely confirm: 'Are you sure you want to end the conversation?'\n"
+    "  2) If the user confirms, IMMEDIATELY call the tool finalize_conversation with a brief 'reason' summarizing their intent.\n"
+    "- After calling the tool, do not ask further questions or continue the conversation. "
+    "Stop producing any further content; the client will handle closing and will run a post-call summary.\n"
+    "- End with a friendly closing message such as: 'Thank you for your patience. We hope you enjoyed our service.'"
+)
+
 # Defaults (can be overridden with env vars)
 # Prefer a pinned preview by default; env OPENAI_REALTIME_MODEL will override this.
 DEFAULT_REALTIME_MODEL = os.environ.get("OPENAI_REALTIME_MODEL", "gpt-4o-realtime-preview-2024-12-17")

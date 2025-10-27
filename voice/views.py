@@ -44,15 +44,7 @@ def realtime_session(request: HttpRequest):
     voice = os.environ.get("OPENAI_REALTIME_VOICE", C.DEFAULT_VOICE)
     transcribe_model = os.environ.get("TRANSCRIBE_MODEL", C.DEFAULT_TRANSCRIBE_MODEL)
 
-    tool_directive = (
-        "End-of-conversation policy:\n"
-        "- When the user indicates they are ready to end (e.g., 'purchase completed', 'order confirmed', "
-        "'that's all', 'we are done', 'no thanks', 'bye', 'end the conversation', 'stop now', 'that's it'), "
-        "IMMEDIATELY call the tool finalize_conversation with a brief 'reason' summarizing their intent.\n"
-        "- After calling the tool, do not ask further questions or continue the conversation. "
-        "Stop producing any further content; the client will handle closing and will run a post-call summary."
-    )
-    instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{tool_directive}"
+    instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{C.TOOL_DIRECTIVE}"
 
     tools = [
         {
@@ -216,7 +208,7 @@ def save_conversation(request: HttpRequest):
         "created_at": (convo.created_at or now).isoformat(),
         "updated_at": (convo.updated_at or now).isoformat(),
         "last_activity": (convo.last_activity or now).isoformat(),
-        # Return analysis snapshot (may be empty if not finalized or if analysis failed)
+        # Return analysis snapshot (maybe empty if not finalized or if analysis failed)
         "summary": convo.summary,
         "satisfaction_rating": convo.satisfaction_rating,
         "satisfaction_label": convo.satisfaction_label,

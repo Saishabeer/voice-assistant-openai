@@ -44,3 +44,17 @@ class Conversation(models.Model):
     def __str__(self):
         ts = self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "N/A"
         return f"Conversation #{self.pk} @ {ts}"
+
+
+class ConversationRecord(models.Model):
+    conversation_id = models.CharField(max_length=128, unique=True, db_index=True)
+    summary = models.TextField(blank=True, default="")
+    data = models.JSONField()  # full JSON payload (transcript, messages, metadata, etc.)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"ConversationRecord({self.conversation_id})"
