@@ -1,0 +1,19 @@
+<!doctype html>
+{% load static %}
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Login</title>
+  <link rel="stylesheet" href="{% static 'voice/realtime.css' %}">
+</head>
+<body style="max-width:560px;margin:40px auto;padding:16px;">
+  <h2>Login</h2>
+  {% if form.errors %}<div style="color:#f66">Please correct the errors below.</div>{% endif %}
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Login</button>
+  </form>
+  <p>Don’t have an account? <a href="{% url 'signup' %}">Sign up</a></p>
+</body>
+</html>

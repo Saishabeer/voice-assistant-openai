@@ -1,6 +1,9 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    load_dotenv = lambda *_, **__: None
 
 # Load environment variables from a .env file in the project root.
 # This is used for sensitive data like SECRET_KEY and OPENAI_API_KEY.
@@ -27,6 +30,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework",
     "voice",  # Our custom application for the voice assistant.
 ]
 
@@ -77,19 +81,32 @@ DATABASES = {
         "PORT": os.environ.get("POSTGRES_PORT", "5432"),
     }
 }
+# Auth redirects (ensures logout sends you back to home and login returns to home)
+LOGIN_URL = "login"
+LOGOUT_REDIRECT_URL = "index"
 
 # Internationalization settings.
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
-
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"] if (BASE_DIR / "static").exists() else []
-
 # Default primary key field type for new models.
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Custom application setting: Load the OpenAI API key from the .env file.
 # This key is used for server-side API calls, like creating sessions and summarizing conversations.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+# These flags are read in `voice/views.py` save_conversation()
+VOICE_SYNC_FINALIZE = True
+VOICE_USE_CELERY_FINALIZE = True
+
+# Optional Celery configuration (pulled from env). If you don't have Redis, you can set
+# CELERY_TASK_ALWAYS_EAGER=1 in your environment for development to run tasks in-process.
+# When Redis is available, set broker/backends accordingly.
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"))
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"))
+CELERY_TIMEZONE = os.environ.get("CELERY_TIMEZONE", "UTC")
+CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "").lower() in ("1", "true", "yes")
+CELERY_TASK_EAGER_PROPAGATES = os.environ.get("CELERY_TASK_EAGER_PROPAGATES", "").lower() in ("1", "true", "yes")

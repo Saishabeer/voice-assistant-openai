@@ -1,0 +1,29 @@
+{% extends "voice/base.html" %}
+{% load static %}
+{% block content %}
+<div class="row">
+  <div class="col">
+    <div class="card">
+      <div class="label">Login</div>
+      <form method="post" action="/login/">
+        {% csrf_token %}
+        {{ form.non_field_errors }}
+        <div style="margin-bottom:10px">
+          <label>Username</label>
+          {{ form.username }}
+          {{ form.username.errors }}
+        </div>
+        <div style="margin-bottom:10px">
+          <label>Password</label>
+          {{ form.password }}
+          {{ form.password.errors }}
+        </div>
+        <button type="submit">Sign in</button>
+      </form>
+      <p style="margin-top:8px;color:var(--muted)">
+        New here? <a href="/signup/">Create an account</a>
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

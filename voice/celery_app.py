@@ -47,30 +47,12 @@ app.conf.update(
     worker_task_log_format="%(levelname)s %(asctime)s [%(processName)s] %(name)s:%(task_name)s[%(task_id)s]: %(message)s",
 )
 
-# Initialize Django ORM: use provided env var, or auto-detect live_assist.settings
-dj_settings = os.environ.get("DJANGO_SETTINGS_MODULE")
-if not dj_settings:
-    try:
-        import importlib
-        importlib.import_module("live_assist.settings")
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "live_assist.settings")
-        dj_settings = "live_assist.settings"
-    except Exception:
-        dj_settings = None
-
-if dj_settings:
-    try:
-        import django
-        django.setup()
-        try:
-            app.config_from_object("django.conf:settings", namespace="CELERY", silent=True)
-        except Exception:
-            pass
-        logger.info("Django configured with settings module: %s", dj_settings)
-    except Exception as e:
-        logger.warning("Django setup failed; ORM tasks will not work until fixed: %s", e)
-else:
-    logger.info("DJANGO_SETTINGS_MODULE not set; running without Django ORM.")
+# Load Celery configuration from Django settings if available.
+# Do NOT call django.setup() here to avoid re-entrant setup during runserver/import time.
+try:
+    app.config_from_object("django.conf:settings", namespace="CELERY", silent=True)
+except Exception as e:
+    logger.warning("Could not load Celery config from Django settings (continuing): %s", e)
 
 # Register tasks from this package
 app.autodiscover_tasks(["voice"])

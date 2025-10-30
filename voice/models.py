@@ -16,6 +16,7 @@ class Conversation(models.Model):
 
     # Linkage
     session_id = models.CharField(max_length=128, blank=True, default="")
+    user_name = models.CharField(max_length=128, blank=True, default="")  # NEW: person’s name
 
     # Transcript (interleaved: "User: ...\nAI: ...")
     conversation = models.TextField(blank=True, default="")
@@ -38,23 +39,11 @@ class Conversation(models.Model):
         db_table = "voice_conversation"
         indexes = [
             models.Index(fields=["session_id"]),
+            models.Index(fields=["user_name"]),
             models.Index(fields=["last_activity"]),
         ]
 
-    def __str__(self):
-        ts = self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "N/A"
-        return f"Conversation #{self.pk} @ {ts}"
-
-
-class ConversationRecord(models.Model):
-    conversation_id = models.CharField(max_length=128, unique=True, db_index=True)
-    summary = models.TextField(blank=True, default="")
-    data = models.JSONField()  # full JSON payload (transcript, messages, metadata, etc.)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
     def __str__(self) -> str:
-        return f"ConversationRecord({self.conversation_id})"
+        ts = self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "N/A"
+        name = f" {self.user_name}" if self.user_name else ""
+        return f"Conversation#{self.pk}{name} @ {ts}"

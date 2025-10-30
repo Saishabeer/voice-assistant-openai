@@ -1,89 +1,94 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
 from typing import Any
 
-import httpx
-from celery import shared_task
-from celery.utils.log import get_task_logger
 from django.db import transaction
-from django.utils import timezone
+from celery import shared_task
 
-from .models import Conversation
-from .services.analysis import analyze_conversation_via_openai
+from .models import Conversation  # file://C:/Users/saish/Desktop/voice%20assist/voice/models.py#Conversation
+from .services.analysis import analyze_conversation_via_openai  # file://C:/Users/saish/Desktop/voice%20assist/voice/services/analysis.py#analyze_conversation_via_openai
 
-logger = get_task_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
-@shared_task(
-    bind=True,
-    name="voice.analyze_and_store_conversation",
-    autoretry_for=(httpx.HTTPError,),
-    retry_backoff=2,
-    retry_kwargs={"max_retries": 3},
-)
+def _simple_local_analysis(text: str) -> dict[str, Any]:
+    t = (text or "").strip()
+    short = t[:200] + ("..." if len(t) > 200 else "")
+    return {
+        "summary": short,
+        "satisfaction_level": {"rating": 3, "label": "Neutral"},
+        "user_behavior": "",
+        "conversation_topic": "",
+        "feedback_summary": "",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "analysis_engine": "local",
+    }
+
+
+@shared_task(bind=True, name="voice.analyze_and_store_conversation", autoretry_for=(Exception,), retry_backoff=2, retry_kwargs={"max_retries": 3})
 def analyze_and_store_conversation(self, conversation_pk: int) -> int:
     """
-    Single background step after a conversation ends:
-    - Calls OpenAI once using your existing JSON schema (no changes to _build_json_schema).
-    - Saves raw JSON to Conversation.raw_json and full API payload to Conversation.raw_response.
-    - Updates derived fields (summary, satisfaction, etc.) from that JSON.
+    Celery task: compute summary/satisfaction for a Conversation and persist it.
+    Returns the conversation primary key on success.
     """
-    logger.info("Begin analysis for conversation_pk=%s", conversation_pk)
-
-    # Lock the row for an atomic update during analysis persistence
-    conv = Conversation.objects.select_for_update().get(pk=conversation_pk)
-    transcript = conv.conversation or ""
-    logger.info("Transcript length for pk=%s: %s chars", conversation_pk, len(transcript))
-
-    parsed: dict[str, Any] | None = None
-    raw_payload: dict[str, Any] | None = None
+    convo = Conversation.objects.get(pk=conversation_pk)
+    transcript = convo.conversation or ""
 
     try:
-        # Uses your schema-driven Responses integration as-is
         parsed, raw_payload = analyze_conversation_via_openai(transcript)
-        engine = (parsed or {}).get("analysis_engine") or "openai:responses"
-        logger.info("Analysis completed for pk=%s using engine=%s", conversation_pk, engine)
+        engine = parsed.get("analysis_engine", "openai")
+        logger.info("Celery analysis engine=%s (convo_id=%s)", engine, convo.id)
     except Exception as e:
-        # Ensure raw_response is always recorded even on failure
-        logger.warning("Analysis exception for pk=%s: %s", conversation_pk, e)
-        parsed = None
-        raw_payload = {
-            "engine": "openai_responses",
-            "error": str(e),
-            "note": "Analysis failed; raw_response recorded for debugging.",
-        }
+        logger.warning("Celery analysis failed, using local fallback (convo_id=%s): %s", convo.id, e)
+        parsed = _simple_local_analysis(transcript)
+        raw_payload = {"engine": "local", "error": str(e), "note": "OpenAI request failed; using local fallback."}
+
+    ts_str = parsed.get("timestamp") or ""
+    try:
+        ts_dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) if ts_str else datetime.now(timezone.utc)
+    except Exception:
+        ts_dt = datetime.now(timezone.utc)
+
+    level = parsed.get("satisfaction_level") or {}
+    rating = level.get("rating")
+    label = level.get("label") or ""
+
+    convo.summary = parsed.get("summary", "") or ""
+    convo.satisfaction_rating = int(rating) if rating is not None else None
+    convo.satisfaction_label = str(label)
+    convo.user_behavior = parsed.get("user_behavior", "") or ""
+    convo.conversation_topic = parsed.get("conversation_topic", "") or ""
+    convo.feedback_summary = parsed.get("feedback_summary", "") or ""
+    convo.analysis_timestamp = ts_dt
+    convo.raw_json = parsed
+    convo.raw_response = raw_payload
 
     with transaction.atomic():
-        # Always persist the raw API payload for audit/debug
-        if raw_payload:
-            conv.raw_response = raw_payload
+        locked_convo = Conversation.objects.select_for_update().get(pk=conversation_pk)
+        locked_convo.summary = convo.summary
+        locked_convo.satisfaction_rating = convo.satisfaction_rating
+        locked_convo.satisfaction_label = convo.satisfaction_label
+        locked_convo.user_behavior = convo.user_behavior
+        locked_convo.conversation_topic = convo.conversation_topic
+        locked_convo.feedback_summary = convo.feedback_summary
+        locked_convo.analysis_timestamp = convo.analysis_timestamp
+        locked_convo.raw_json = convo.raw_json
+        locked_convo.raw_response = convo.raw_response
 
-        # On success, store the parsed JSON and update derived fields
-        if isinstance(parsed, dict):
-            conv.raw_json = parsed
-            conv.summary = parsed.get("summary", "") or conv.summary
+        locked_convo.save(update_fields=[
+            "summary",
+            "satisfaction_rating",
+            "satisfaction_label",
+            "user_behavior",
+            "conversation_topic",
+            "feedback_summary",
+            "analysis_timestamp",
+            "raw_json",
+            "raw_response",
+            "updated_at",
+        ])
 
-            # satisfaction_level = {"rating": int (1-5), "label": str}
-            sat = parsed.get("satisfaction_level") or {}
-            if isinstance(sat, dict):
-                rating = sat.get("rating")
-                label = sat.get("label", "")
-                conv.satisfaction_rating = rating if isinstance(rating, int) else conv.satisfaction_rating
-                conv.satisfaction_label = label or conv.satisfaction_label
-
-            conv.user_behavior = parsed.get("user_behavior", "") or conv.user_behavior
-            conv.conversation_topic = parsed.get("conversation_topic", "") or conv.conversation_topic
-            conv.feedback_summary = parsed.get("feedback_summary", "") or conv.feedback_summary
-            conv.analysis_timestamp = timezone.now()
-
-        conv.last_activity = timezone.now()
-        conv.save()
-
-    logger.info(
-        "Stored conversation pk=%s summary_len=%s rating=%s label=%s",
-        conv.pk,
-        len(conv.summary or ""),
-        conv.satisfaction_rating,
-        conv.satisfaction_label,
-    )
-    return conv.pk
+    logger.info("Celery: saved summary/satisfaction (convo_id=%s)", convo.id)
+    return convo.pk

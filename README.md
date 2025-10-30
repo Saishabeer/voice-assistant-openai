@@ -118,6 +118,16 @@ live-assist/
 
 ---
 
+## ✅ Data Persistence Notes
+
+Stopping a realtime conversation now triggers a two-step save on the backend:
+
+1. The browser first pushes the latest transcript snapshot (`finalize=false`).
+2. If the session was not already finalized, the client sends a second request with `finalize=true`, `confirmed=true`, and `close=true`.
+
+This ensures the Celery task (or synchronous fallback) persists the summary, satisfaction rating, feedback, and raw JSON payloads in `voice_conversation`.
+
+---
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a pull request or open an issue for any bugs, feature requests, or improvements.

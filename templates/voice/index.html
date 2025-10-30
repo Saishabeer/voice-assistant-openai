@@ -1,0 +1,92 @@
+<!doctype html>
+{% load static %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Live AI Voice Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="{% static 'voice/realtime.css' %}">
+  <style>
+    .layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; min-height: 100vh; }
+    .sidebar { border-right: 1px solid #333; padding: 12px; }
+    .content { padding: 12px; }
+    .btn { display:inline-block; padding:8px 12px; border:1px solid #555; border-radius:6px; cursor:pointer; }
+    .btn:hover { background:#222; }
+    ul#historyList { list-style:none; padding:0; margin:8px 0 0; display:flex; flex-direction:column; gap:8px; }
+    .history-item { padding:8px; border:1px solid #333; border-radius:6px; cursor:pointer; }
+    .history-item:hover { background:#1b1b1b; }
+    .history-item.active { border-color:#6f9cff; background:#101a2e; }
+    .muted { opacity:.7 }
+    .error { color:#ff6b6b }
+    details > summary { outline:none; }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap:8px }
+    .toolbar .actions { display:flex; gap:8px; }
+    .userbar { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+    .userbar .who { font-weight:600; }
+    .userbar a { color:#9ec1ff; text-decoration:none; }
+    .userbar a:hover { text-decoration:underline; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="userbar">
+        <div class="who">
+          {% if request.user.is_authenticated %}
+            Hello, {{ request.user.username }}
+          {% else %}
+            Hello, Guest
+          {% endif %}
+        </div>
+        <div class="actions">
+          {% if request.user.is_authenticated %}
+            <a href="{% url 'logout' %}">Logout</a>
+          {% else %}
+            <a href="{% url 'login' %}">Login</a> · <a href="{% url 'signup' %}">Sign up</a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <h3 style="margin:0">Chats</h3>
+        <div class="actions">
+          <button id="refreshHistoryBtn" class="btn" title="Refresh chat history">Refresh</button>
+          <button id="newChatBtn" class="btn" title="Start a new chat">New Chat</button>
+        </div>
+      </div>
+
+      <ul id="historyList">
+        <li class="muted">Loading…</li>
+      </ul>
+    </aside>
+
+    <main class="content">
+      <h2 style="margin-top:0">Conversation</h2>
+      <section id="chatDetail" class="panel">
+        <div class="muted">Select a conversation from the left to see summary and satisfaction.</div>
+      </section>
+
+      <audio id="aiAudio" autoplay></audio>
+      <div style="margin-top:16px; display:flex; gap:8px;">
+        <button id="startBtn" class="btn">Start</button>
+        <button id="stopBtn" class="btn" disabled>Stop</button>
+        <span id="status" class="muted">Idle</span>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px;">
+        <div>
+          <div class="muted">You (live transcription)</div>
+          <pre id="userTranscript" style="white-space:pre-wrap"></pre>
+        </div>
+        <div>
+          <div class="muted">Assistant (text)</div>
+          <pre id="aiTranscript" style="white-space:pre-wrap"></pre>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script defer src="{% static 'voice/app.js' %}"></script>
+  <script defer src="{% static 'voice/history.js' %}"></script>
+</body>
+</html>

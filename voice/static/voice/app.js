@@ -399,7 +399,11 @@
         sessionId = (session && session.id) || "";
         if (!(session && session.client_secret && session.client_secret.value)) throw new Error("Invalid session payload");
       } catch (_e) {
-        setStatus("Failed to create session."); startBtn.disabled=false; stopBtn.disabled=true; return;
+        // Allow offline finalize path even if session creation fails
+        setStatus("Failed to create session. You can still click Stop to finalize and save.");
+        startBtn.disabled = false;
+        stopBtn.disabled = false;
+        return;
       }
 
       var ephemeralKey = session.client_secret.value;
@@ -454,9 +458,12 @@
 
       var snap = currentSnapshot();
       if (!snap.trim()) return { ok: true, data: null }; // nothing to save is not an error
-      if (saving) return { ok: false, data: null };
+      var isFinalize = !!options.finalize;
+      // Do not block finalize even if another save is in progress
+      if (saving && !isFinalize) return { ok: false, data: null };
       var nowTs = Date.now();
-      if (nowTs - lastSaveAt < MIN_SAVE_INTERVAL_MS && options.autosave) return { ok: true, data: null };
+      // Never throttle finalize requests by the autosave interval
+      if (!isFinalize && options.autosave && (nowTs - lastSaveAt < MIN_SAVE_INTERVAL_MS)) return { ok: true, data: null };
 
       saving = true;
       try {
@@ -473,7 +480,6 @@
         }
         return { ok: res.ok, data: js };
       } catch (_e) {
-        scheduleAutoSave(4000);
         return { ok: false, data: null };
       } finally { saving = false; }
     }
@@ -490,7 +496,22 @@
       options = options || {};
       var skipSave = !!options.skipSave;
       stopBtn.disabled = true; startBtn.disabled = false; setStatus("Stopping...");
-      if (!skipSave) await saveConversation({ autosave: true, reason: "manual_stop", finalize: false, confirmed: false, close: false });
+      if (!skipSave) {
+        var baseSave = await saveConversation({ autosave: true, reason: "manual_stop", finalize: false, confirmed: false, close: false });
+        if (!finalized && baseSave && baseSave.ok) {
+          var forcedFinalize = await saveConversation({
+            autosave: true,
+            reason: "manual_stop_finalize",
+            finalize: true,
+            confirmed: true,
+            close: true,
+          });
+          if (forcedFinalize && forcedFinalize.ok) {
+            finalized = true;
+            setConvoState("ended");
+          }
+        }
+      }
       try { if (eventsDC) eventsDC.close(); } catch (_e) {}
       try {
         if (pc) {

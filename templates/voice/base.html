@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+{% load static %}
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live AI Voice Assistant</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="{% static 'voice/realtime.css' %}" rel="stylesheet" />
+  <style>
+    .topbar {
+      background: #0b0e13;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 0;
+      margin-bottom: 16px;
+    }
+    .topbar .container { display: flex; align-items: center; justify-content: space-between; }
+    .brand { font-weight: 700; color: var(--text); letter-spacing: .3px; }
+    .nav a, .nav form button {
+      color: var(--text);
+      text-decoration: none;
+      background: #1a2230;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      margin-left: 8px;
+      display: inline-block;
+    }
+    .nav form { display: inline; }
+    .flash { margin: 8px 0; color: #f3d87a; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="container">
+      <div class="brand">Live AI Voice Assistant</div>
+      <div class="nav">
+        {% if request.user.is_authenticated %}
+          <a href="/">Home</a>
+          <form action="/logout/" method="post" style="display:inline">{% csrf_token %}
+            <button type="submit">Logout</button>
+          </form>
+        {% else %}
+          <a href="/login/">Login</a>
+          <a href="/signup/">Sign up</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    {% if messages %}
+      <div class="flash">
+        {% for m in messages %}<div>{{ m }}</div>{% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>
