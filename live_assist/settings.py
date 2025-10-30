@@ -83,6 +83,7 @@ DATABASES = {
 }
 # Auth redirects (ensures logout sends you back to home and login returns to home)
 LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "index"
 LOGOUT_REDIRECT_URL = "index"
 
 # Internationalization settings.
