@@ -4,6 +4,7 @@ import os
 import logging
 from celery import Celery
 from celery.signals import (
+    worker_process_init,
     worker_ready,
     task_received,
     task_prerun,
@@ -48,14 +49,27 @@ app.conf.update(
 )
 
 # Load Celery configuration from Django settings if available.
-# Do NOT call django.setup() here to avoid re-entrant setup during runserver/import time.
+# Ensure the settings module is set via environment, but do NOT call django.setup() here
+# to avoid re-entrant setup during runserver/import time.
+if not os.environ.get("DJANGO_SETTINGS_MODULE"):
+    os.environ["DJANGO_SETTINGS_MODULE"] = "live_assist.settings"
 try:
     app.config_from_object("django.conf:settings", namespace="CELERY", silent=True)
 except Exception as e:
     logger.warning("Could not load Celery config from Django settings (continuing): %s", e)
 
 # Register tasks from this package
-app.autodiscover_tasks(["voice"])
+app.autodiscover_tasks(["voice"])  # discovers voice.tasks
+try:
+    # Also discover non-standard module name explicitly
+    app.autodiscover_tasks(["voice"], related_name="tasks_reports")
+except TypeError:
+    # Older Celery versions may not support related_name; import directly as fallback
+    try:
+        import importlib
+        importlib.import_module("voice.tasks_reports")
+    except Exception:
+        pass
 
 # Inline Celery signal handlers for concise lifecycle logs (no extra files created)
 @worker_ready.connect
@@ -90,3 +104,14 @@ logger.info("Celery broker: %s", BROKER_URL)
 logger.info("Celery backend: %s", RESULT_BACKEND)
 if task_always_eager:
     logger.info("Celery is running in EAGER mode (tasks execute synchronously).")
+
+
+# Ensure Django is fully initialized in the worker process context only
+@worker_process_init.connect
+def _setup_django_in_worker(**_):
+    try:
+        import django
+        django.setup()
+        logger.info("Django apps initialized in Celery worker process")
+    except Exception as e:
+        logger.warning("Failed to initialize Django in worker: %s", e)

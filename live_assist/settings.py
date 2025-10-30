@@ -1,5 +1,10 @@
 import os
 from pathlib import Path
+# at top (with other imports)
+from celery.schedules import crontab
+
+# ensure timezone is set for local-time schedules
+CELERY_TIMEZONE = os.environ.get("CELERY_TIMEZONE", "Asia/Kolkata")  # set to your TZ
 try:
     from dotenv import load_dotenv
 except ModuleNotFoundError:
@@ -31,6 +36,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+
     "voice",  # Our custom application for the voice assistant.
 ]
 
@@ -104,10 +110,34 @@ VOICE_SYNC_FINALIZE = True
 VOICE_USE_CELERY_FINALIZE = True
 
 # Optional Celery configuration (pulled from env). If you don't have Redis, you can set
-# CELERY_TASK_ALWAYS_EAGER=1 in your environment for development to run tasks in-process.
 # When Redis is available, set broker/backends accordingly.
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"))
 CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"))
 CELERY_TIMEZONE = os.environ.get("CELERY_TIMEZONE", "UTC")
 CELERY_TASK_ALWAYS_EAGER = os.environ.get("CELERY_TASK_ALWAYS_EAGER", "").lower() in ("1", "true", "yes")
 CELERY_TASK_EAGER_PROPAGATES = os.environ.get("CELERY_TASK_EAGER_PROPAGATES", "").lower() in ("1", "true", "yes")
+
+# Celery Beat: run admin stats email every 30 minutes
+CELERY_BEAT_SCHEDULE = {
+    "voice_admin_stats_every_30m": {
+        "task": "voice.tasks_reports.send_admin_stats",
+        #"schedule": 1800.0,  # seconds (30 minutes)
+        #"schedule": 1800.0,  # seconds (30 minutes)
+#"schedule": crontab(minute=0, hour=0),  # uses CELERY_TIMEZONE
+        "schedule": 5.0,  # seconds (30 minutes)
+    }
+}
+
+# Email configuration (set via environment for production)
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "1").lower() in ("1", "true", "yes")
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@example.com")
+
+# Optional: derive ADMINS from comma-separated ADMIN_EMAILS env var if provided
+_ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "").strip()
+if _ADMIN_EMAILS:
+    ADMINS = [(e.strip(), e.strip()) for e in _ADMIN_EMAILS.split(",") if e.strip()]
