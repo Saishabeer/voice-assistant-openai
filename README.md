@@ -73,16 +73,9 @@ live-assist/
 
 2.  **Create and activate a virtual environment:**
 
-    ```sh
-    # Create a virtual environment
-    python -m venv venv
-    
-    # Activate it (Windows)
-    venv\Scripts\activate
-    
-    # Activate it (macOS / Linux)
-    source venv/bin/activate
-    ```
+    - Create a virtual environment:
+      ```sh
+      python -m venv venv
 
 3.  **Install the dependencies:**
 
@@ -127,6 +120,8 @@ Stopping a realtime conversation now triggers a two-step save on the backend:
 
 This ensures the Celery task (or synchronous fallback) persists the summary, satisfaction rating, feedback, and raw JSON payloads in `voice_conversation`.
 
+Optional beat scheduler (if you use periodic tasks):
+
 ---
 ## 🤝 Contributing
 
@@ -138,6 +133,31 @@ Contributions are welcome! Please feel free to submit a pull request or open an 
 4.  Push to the branch (`git push origin feature/your-feature-name`).
 5.  Open a Pull Request.
 
+---
+
+## 🧪 Tests
+
+- Tests run with Celery eager mode by default when you export the eager env vars as shown above.
+- No Redis is required to run tests.
+
+---
+
+## 🛠️ Troubleshooting (Windows)
+
+- The Python package "docker" does not install the Docker CLI. Install Docker Desktop to use the docker command, or use Memurai for Redis without Docker.
+- Prefer PowerShell Start-Service Memurai over legacy net start.
+- If you see PostgreSQL connection errors, ensure a local Postgres is running and the credentials in .env match.
+
+---
+
+## 📬 Configuration Notes
+
+- Sensitive env vars are read from .env by live_assist/settings.py.
+- For periodic tasks and Celery config, see settings.py (CELERY_* settings).
+- Email delivery requires valid SMTP credentials and may need App Passwords for Gmail.
+
+---
+
 ## 📄 License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details..
+MIT — see LICENSE for details.
