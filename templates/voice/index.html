@@ -95,9 +95,9 @@
     </main>
   </div>
 
-  <script defer src="{% static 'voice/app.js' %}"></script>
+  <script defer src="{% static 'voice/js/app.js' %}"></script>
   {% if request.user.is_authenticated %}
-  <script defer src="{% static 'voice/history.js' %}"></script>
+  <script defer src="{% static 'voice/js/history.js' %}"></script>
   {% endif %}
 </body>
 </html>

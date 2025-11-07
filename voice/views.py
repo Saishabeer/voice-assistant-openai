@@ -26,7 +26,6 @@ from django.views.decorators.http import require_GET, require_POST
 
 from . import constants as C
 from .models import Conversation  # file://C:/Users/saish/Desktop/voice%20assist/voice/models.py#Conversation
-from .services.convo import build_conversation_text
 from .services.analysis import analyze_conversation_via_openai  # file://C:/Users/saish/Desktop/voice%20assist/voice/services/analysis.py#analyze_conversation_via_openai
 from .serializers import SaveConversationSerializer, ConversationResponseSerializer  # file://C:/Users/saish/Desktop/voice%20assist/voice/serializers.py#SaveConversationSerializer
 
@@ -111,19 +110,7 @@ def realtime_session(request: HttpRequest):
         return HttpResponseServerError("Session creation failed")
 
 
-def _find_recent_conversation(session_id: str) -> Conversation | None:
-    if not session_id:
-        return None
-    cutoff = timezone.now() - timedelta(minutes=45)
-    try:
-        return (
-            Conversation.objects
-            .filter(session_id=session_id, last_activity__gte=cutoff)
-            .order_by("-last_activity", "-id")
-            .first()
-        )
-    except Exception:
-        return None
+    
 
 
 def _simple_local_analysis(text: str) -> dict:
