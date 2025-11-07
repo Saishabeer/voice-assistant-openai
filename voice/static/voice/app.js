@@ -32,13 +32,13 @@
 
     var pc = null, micStream = null, eventsDC = null;
     var sessionId = "", conversationId = null;
-
     var AUTO_SAVE_IDLE_MS = 8000;
     var MIN_SAVE_INTERVAL_MS = 10000;
     var autosaveTimer = null, dirty = false, lastSnapshot = "", lastSaveAt = 0, saving = false;
 
     var finalized = false;
     var greetingPending = false, greetTimeoutHandle = null;
+    var greeted = false; // ensure AI initiates only once per session
 
     // Force stop shortly after sending the closing message (don’t rely on model events)
     var STOP_AFTER_CLOSE_MS = 1200;
@@ -120,18 +120,10 @@
     }
     function sendContinueInstruction() {
       if (!eventsDC || eventsDC.readyState !== "open") return;
-      var text = "The user did not confirm ending. Continue assisting. Do NOT call finalize_conversation again unless the user explicitly confirms in their next turn.";
+      var text = "The user did not confirm ending. Continue assisting. Do NOT call finalize_conversation again unless the user explicitly confirms in their next turn. Always respond only in English.";
       try { eventsDC.send(JSON.stringify({ type: "response.create", response: { instructions: text } })); } catch (_e) {}
     }
     function forceStopSoon(){ setTimeout(function(){ stop({ skipSave: true }); }, STOP_AFTER_CLOSE_MS); }
-
-    function attachEventChannel(dc){
-      if (!dc) return;
-      eventsDC = dc;
-      eventsDC.onopen = function(){ setStatus("Connected."); };
-      eventsDC.onclose = async function(){ setStatus("Events channel closed."); await tryAutoSave("channel_closed"); };
-      eventsDC.onmessage = function(ev){ var evt; try { evt = JSON.parse(ev.data); } catch (_e) { return; } handleRealtimeEvent(evt); };
-    }
 
     function cancelFinalizeFallback() {
       if (finalizeFallbackTimer) { clearTimeout(finalizeFallbackTimer); finalizeFallbackTimer = null; }
@@ -139,6 +131,32 @@
 
     // Normalize and helpers for YES/NO detection
     function normalizeLetters(s) { return (s || "").toLowerCase().replace(/[^\p{L}]+/gu, " ").trim(); }
+
+    function attachEventChannel(dc){
+      if (!dc) return;
+      eventsDC = dc;
+      eventsDC.onopen = function(){
+        setStatus("Connected.");
+        // Proactively have the AI speak first once the data channel is open
+        if (!greeted) {
+          greeted = true;
+          try {
+            eventsDC.send(JSON.stringify({
+              type: "response.create",
+              response: {
+                instructions: "Start with a brief, friendly greeting and ask how you can help the user. Keep it concise. Respond only in English and do not switch languages."
+              }
+            }));
+          } catch (_e) {}
+        }
+      };
+      eventsDC.onclose = async function(){ setStatus("Events channel closed."); await tryAutoSave("channel_closed"); };
+      eventsDC.onmessage = function(ev){
+        var evt;
+        try { evt = JSON.parse(ev.data); } catch (_e) { return; }
+        handleRealtimeEvent(evt);
+      };
+    }
     function isNegativeTurn(text) {
       var lc = (text || "").toLowerCase();
       return NO_TOKENS.some(function(tok){ return lc.indexOf(tok) !== -1; });
@@ -379,12 +397,7 @@
       if (autosaveTimer) clearTimeout(autosaveTimer);
       autosaveTimer = null; dirty = false; lastSnapshot = ""; lastSaveAt = 0; finalized = false;
       conversationId = null; greetingPending = false; if (greetTimeoutHandle) { clearTimeout(greetTimeoutHandle); greetTimeoutHandle = null; }
-      // Reset FSM and state
-      confirmationRequested = false; confirmationGranted = false; confirmationAskedAt = 0; currentUserTurn = "";
-      turnIndex = 0; confirmAskedTurnIndex = -1; lastUserTurnIndex = -1;
-      cancelFinalizeFallback();
-      rejectFinalizeUntilTs = 0;
-      lastStopIntentTs = 0;
+      greeted = false; // reset proactive greeting for a brand new session
       setConvoState("active");
 
       try { micStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }

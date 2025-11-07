@@ -16,7 +16,9 @@ from django.http import (
     HttpResponseBadRequest,
     HttpResponseServerError,
     JsonResponse,
+    Http404,
 )
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import render, redirect
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -49,6 +51,9 @@ def signup_view(request: HttpRequest):
 
 @require_GET
 def realtime_session(request: HttpRequest):
+    # Enforce authentication for realtime session API
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
     api_key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         logger.error("OPENAI_API_KEY not configured")
@@ -58,7 +63,7 @@ def realtime_session(request: HttpRequest):
     voice = os.environ.get("OPENAI_REALTIME_VOICE", C.DEFAULT_VOICE)
     transcribe_model = os.environ.get("TRANSCRIBE_MODEL", C.DEFAULT_TRANSCRIBE_MODEL)
 
-    instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{C.TOOL_DIRECTIVE}"
+    instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{C.TOOL_DIRECTIVE}\n\nAlways respond only in English. Do not switch languages."
 
     tools = [
         {
@@ -248,69 +253,38 @@ def save_conversation(request: HttpRequest):
     Also updates user_name if provided (or defaults to the logged-in user).
     Fallback: if Celery enqueue fails, compute synchronously and persist within the request.
     """
+    # Enforce authentication for save API
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
     try:
         payload = json.loads(request.body.decode("utf-8") or "{}")
     except Exception:
         return HttpResponseBadRequest("Invalid JSON")
 
-    in_ser = SaveConversationSerializer(data=payload)
+    in_ser = SaveConversationSerializer(data=payload, context={"request": request})
     if not in_ser.is_valid():
         return JsonResponse(in_ser.errors, status=400)
 
     data = in_ser.validated_data
-    user_text = (data.get("user_text") or "").strip()
-    ai_text = (data.get("ai_text") or "").strip()
-    session_id = (data.get("session_id") or "").strip()
-    provided_id = data.get("conversation_id")
-    user_name = (data.get("user_name") or "").strip()
-
-    if not user_name and request.user.is_authenticated:
-        user_name = request.user.username
-
     finalize = bool(data.get("finalize", False))
     confirmed = bool(data.get("confirmed", False))
     reason = (data.get("reason") or "").strip().lower()
+    session_id = (data.get("session_id") or "").strip()
+    provided_id = data.get("conversation_id")
     logger.info(
         "save_conversation: finalize=%s confirmed=%s reason=%s session_id=%s provided_id=%s",
         finalize, confirmed, reason, session_id, provided_id,
     )
 
-    conversation_text = build_conversation_text(user_text, ai_text)
-    now = timezone.now()
-
-    convo: Conversation | None = None
-    if provided_id:
-        try:
-            convo = Conversation.objects.get(pk=int(provided_id))
-        except Exception:
-            convo = None
-    if not convo:
-        convo = _find_recent_conversation(session_id)
-
-    created = False
-    if not convo:
-        convo = Conversation(
-            session_id=session_id,
-            user_name=user_name,
-            conversation=conversation_text,
-            last_activity=now,
-        )
-        created = True
-
-    if conversation_text:
-        convo.conversation = conversation_text
-    if user_name and user_name != convo.user_name:
-        convo.user_name = user_name
-    convo.last_activity = now
-
+    # Persist conversation via serializer.create()
     try:
-        if created:
-            convo.save()
-        else:
-            convo.save(update_fields=["conversation", "last_activity", "user_name", "updated_at"])
+        convo: Conversation = in_ser.save()
     except Exception:
         logger.exception("Failed to save conversation transcript")
         return HttpResponseServerError("Failed to save conversation")
+
+    now = timezone.now()
 
     did_finalize = False
 
@@ -365,9 +339,102 @@ def save_conversation(request: HttpRequest):
     out_ser = ConversationResponseSerializer(resp_payload)
     return JsonResponse(out_ser.data, status=200)
 
+def _derive_title_and_snippet(conversation_text: str, summary: str) -> dict:
+    title = (summary or "").strip()
+    text = (conversation_text or "").strip()
+    if not title:
+        first_line = ""
+        for ln in text.splitlines():
+            ln = ln.strip()
+            if ln:
+                first_line = ln
+                break
+        title = (first_line[:80] + ("…" if len(first_line) > 80 else "")) or "Untitled conversation"
+    snippet_src = summary or text
+    snippet = (snippet_src[:120] + ("…" if len(snippet_src) > 120 else "")) if snippet_src else ""
+    return {"title": title, "snippet": snippet}
 
-@csrf_exempt
+
+@require_GET
+@login_required
+def conversations_json(request: HttpRequest) -> JsonResponse:
+    try:
+        limit = max(1, min(100, int(request.GET.get("limit", "20"))))
+    except ValueError:
+        limit = 20
+    try:
+        days = max(1, min(365, int(request.GET.get("days", "30"))))
+    except ValueError:
+        days = 30
+
+    session_id = (request.GET.get("session_id") or "").strip()
+    user_name = (request.GET.get("user_name") or "").strip()
+
+    if not user_name and getattr(request, "user", None) and request.user.is_authenticated:
+        user_name = request.user.username
+
+    since = timezone.now() - timedelta(days=days)
+    qs = Conversation.objects.filter(last_activity__gte=since).order_by("-last_activity", "-id")
+    if session_id:
+        qs = qs.filter(session_id=session_id)
+    if user_name:
+        qs = qs.filter(user_name=user_name)
+
+    items = []
+    for convo in qs[:limit]:
+        meta = _derive_title_and_snippet(convo.conversation or "", convo.summary or "")
+        items.append({
+            "id": convo.id,
+            "title": meta["title"],
+            "snippet": meta["snippet"],
+            "last_activity": (convo.last_activity or convo.updated_at or convo.created_at).isoformat(),
+            "session_id": convo.session_id or "",
+            "user_name": convo.user_name or "",
+        })
+    return JsonResponse({"items": items}, status=200)
+
+
+@require_GET
+@login_required
+def conversation_detail_json(request: HttpRequest, pk: int) -> JsonResponse:
+    try:
+        convo = Conversation.objects.get(pk=pk)
+    except Conversation.DoesNotExist:
+        raise Http404("Conversation not found")
+
+    data = {
+        "id": convo.id,
+        "session_id": convo.session_id or "",
+        "user_name": convo.user_name or "",
+        "last_activity": (convo.last_activity or convo.updated_at or convo.created_at).isoformat(),
+        "summary": convo.summary or "",
+        "satisfaction_rating": convo.satisfaction_rating,
+        "satisfaction_label": convo.satisfaction_label or "",
+        "conversation": convo.conversation or "",
+        "analysis_timestamp": convo.analysis_timestamp.isoformat() if convo.analysis_timestamp else None,
+    }
+    return JsonResponse(data, status=200)
+
+
 @require_POST
-def import_conversation_json(request: HttpRequest):
-    # Removed endpoint: JSON import is no longer supported.
-    return HttpResponseBadRequest("Import endpoint removed")
+@login_required
+def conversation_delete_json(request: HttpRequest, pk: int) -> JsonResponse:
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return JsonResponse({"error": "Authentication required"}, status=401)
+
+    try:
+        convo = Conversation.objects.get(pk=pk)
+    except Conversation.DoesNotExist:
+        raise Http404("Conversation not found")
+
+    owner = (convo.user_name or "").strip()
+    if owner:
+        if owner != user.username and not (user.is_staff or user.is_superuser):
+            return JsonResponse({"error": "Forbidden"}, status=403)
+    else:
+        if not (user.is_staff or user.is_superuser):
+            return JsonResponse({"error": "Forbidden"}, status=403)
+
+    convo.delete()
+    return JsonResponse({"status": "ok"}, status=200)

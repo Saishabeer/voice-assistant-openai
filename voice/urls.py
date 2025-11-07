@@ -1,7 +1,14 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
-from .views import index, realtime_session, save_conversation, signup_view
-from .api import conversations_json, conversation_detail_json, conversation_delete_json
+from .views import (
+    index,
+    realtime_session,
+    save_conversation,
+    signup_view,
+    conversations_json,
+    conversation_detail_json,
+    conversation_delete_json,
+)
 
 urlpatterns = [
     path("", index, name="index"),

@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8">
   <title>Sign up</title>
-  <link rel="stylesheet" href="{% static 'voice/realtime.css' %}">
+  <link rel="stylesheet" href="{% static 'voice/css/realtime.css' %}">
 </head>
 <body style="max-width:560px;margin:40px auto;padding:16px;">
   <h2>Create your account</h2>
@@ -15,5 +15,15 @@
     <button type="submit">Create account</button>
   </form>
   <p>Already have an account? <a href="{% url 'login' %}">Login</a></p>
+  <script>
+    document.addEventListener('DOMContentLoaded', function(){
+      try {
+        var p1 = document.getElementById('id_password1');
+        var p2 = document.getElementById('id_password2');
+        if (p1) { p1.setAttribute('minlength', '8'); p1.setAttribute('autocomplete','new-password'); }
+        if (p2) { p2.setAttribute('minlength', '8'); p2.setAttribute('autocomplete','new-password'); }
+      } catch (e) {}
+    });
+  </script>
 </body>
 </html>

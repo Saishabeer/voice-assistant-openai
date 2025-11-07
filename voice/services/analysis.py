@@ -10,12 +10,6 @@ import httpx
 from django.conf import settings
 from voice import constants as C  # centralized defaults and endpoints
 
-def _get_api_key() -> str:
-    key = getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY")
-    if not key:
-        raise RuntimeError("OPENAI_API_KEY not configured")
-    return key
-
 
 def _build_json_schema() -> Dict[str, Any]:
     # Strict schema based on your specification (unchanged)

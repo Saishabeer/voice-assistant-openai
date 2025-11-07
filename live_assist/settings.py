@@ -102,6 +102,14 @@ STATICFILES_DIRS = [BASE_DIR / "static"] if (BASE_DIR / "static").exists() else 
 # Default primary key field type for new models.
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Strong password validators (prevents weak/single-character passwords)
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
 # Custom application setting: Load the OpenAI API key from the .env file.
 # This key is used for server-side API calls, like creating sessions and summarizing conversations.
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")

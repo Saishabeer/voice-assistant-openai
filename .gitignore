@@ -20,6 +20,14 @@ __pycache__/
 db.sqlite3
 db.sqlite3-journal
 
+# Celery / Beat runtime files
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat-*
+*.dat
+*.dir
+*.bak
+
 # Collected static files (for deployment)
 staticfiles/
 

@@ -6,6 +6,7 @@ from datetime import timedelta as dt_timedelta
 from django.http import JsonResponse, HttpRequest, Http404
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+from django.contrib.auth.decorators import login_required
 
 from .models import Conversation  # file://C:/Users/saish/Desktop/voice%20assist/voice/models.py#Conversation
 
@@ -27,10 +28,11 @@ def _derive_title_and_snippet(conversation_text: str, summary: str) -> Dict[str,
 
 
 @require_GET
+@login_required
 def conversations_json(request: HttpRequest) -> JsonResponse:
     """
     GET /conversations/?limit=20[&days=30][&session_id=...][&user_name=...]
-    If user_name is omitted and the user is authenticated, default to request.user.username.
+    Requires authentication.
     """
     try:
         limit = max(1, min(100, int(request.GET.get("limit", "20"))))
@@ -70,9 +72,10 @@ def conversations_json(request: HttpRequest) -> JsonResponse:
 
 
 @require_GET
+@login_required
 def conversation_detail_json(request: HttpRequest, pk: int) -> JsonResponse:
     """
-    GET /conversations/<id>/
+    GET /conversations/<id>/ — Requires authentication.
     """
     try:
         convo = Conversation.objects.get(pk=pk)
@@ -94,6 +97,7 @@ def conversation_detail_json(request: HttpRequest, pk: int) -> JsonResponse:
 
 
 @require_POST
+@login_required
 def conversation_delete_json(request: HttpRequest, pk: int) -> JsonResponse:
     """
     POST /conversations/<id>/delete/
