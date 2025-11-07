@@ -59,21 +59,28 @@
       </div>
 
       <ul id="historyList">
-        <li class="muted">Loading…</li>
+        {% if request.user.is_authenticated %}
+          <li class="muted">Loading…</li>
+        {% else %}
+          <li class="muted">Please login to view your chat history.</li>
+        {% endif %}
       </ul>
     </aside>
 
     <main class="content">
       <h2 style="margin-top:0">Conversation</h2>
+      {% if not request.user.is_authenticated %}
+        <div class="muted" style="margin:8px 0 0;">If you want to use our service, please login or signup.</div>
+      {% endif %}
       <section id="chatDetail" class="panel">
         <div class="muted">Select a conversation from the left to see summary and satisfaction.</div>
       </section>
 
       <audio id="aiAudio" autoplay></audio>
       <div style="margin-top:16px; display:flex; gap:8px;">
-        <button id="startBtn" class="btn">Start</button>
+        <button id="startBtn" class="btn" {% if not request.user.is_authenticated %}disabled title="Login required"{% endif %}>Start</button>
         <button id="stopBtn" class="btn" disabled>Stop</button>
-        <span id="status" class="muted">Idle</span>
+        <span id="status" class="muted">{% if request.user.is_authenticated %}Idle{% else %}Login required{% endif %}</span>
       </div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px;">
         <div>
@@ -89,6 +96,8 @@
   </div>
 
   <script defer src="{% static 'voice/app.js' %}"></script>
+  {% if request.user.is_authenticated %}
   <script defer src="{% static 'voice/history.js' %}"></script>
+  {% endif %}
 </body>
 </html>
