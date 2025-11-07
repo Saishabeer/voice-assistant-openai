@@ -15,54 +15,66 @@
   <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-GPT--4o-412991?logo=openai&logoColor=white">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-yellow.svg">
 </p>
-
 <!-- You can add a GIF or screenshot of the application in action here! -->
 <!-- ![App Screenshot](path/to/screenshot.png) -->
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-*   **🤖 Conversational AI Persona**: Features a pre-defined AI salesperson persona ("Rishi") capable of understanding needs, recommending services, and guiding users.
-*   **⚡ Real-time, Two-Way Audio**: Utilizes **OpenAI's Realtime API** for low-latency transcription and simultaneous audio response generation.
-*   **🔌 WebSocket Streaming**: Employs **Django Channels** for a persistent, efficient connection between the browser and the server.
-*   **🛠️ Advanced Tool Integration**: Includes sophisticated logic for conversation management, such as detecting user intent to end the session.
+*   **Conversational AI Persona**: "Rishi" — understands needs, recommends services, and guides users.
+*   **Real-time, Two-Way Audio (WebRTC)**: Uses OpenAI's Realtime API over WebRTC; no Django Channels/WebSockets required.
+*   **AI Speaks First & English-Only**: Assistant proactively greets and always responds in English.
+*   **Auth-Gated APIs + Guest UX**: Session/save/history are protected; guests see a login/signup notice.
+*   **Clean persistence**: `save_conversation()` uses `SaveConversationSerializer.create()` to upsert safely.
+*   **Optional analysis**: Celery task summarizes and rates satisfaction post-conversation.
+*   **Organized static**: CSS in `voice/static/voice/css/`, JS in `voice/static/voice/js/`.
 
-## 🚀 How It Works
+## How It Works
 
-The process is a simple, elegant loop:
+High-level flows:
 
-**Browser (Client)** `<- WebSocket ->` **Django (Server)** `<-- Realtime Session -->` **OpenAI API**
+**Browser (Client)** `=> WebRTC (audio + data)` **OpenAI Realtime API**
 
-1.  **Session Start**: The browser connects to the Django server via a WebSocket.
-2.  **Realtime Session**: Django initiates a `Realtime Session` with the OpenAI API, configured with the "Rishi" persona and tool directives.
-3.  **Audio Streaming**: The browser captures user audio and streams it to the Django server.
-4.  **AI Processing**: Django forwards the audio to the OpenAI session, which handles transcription, AI reasoning, and generating a spoken response.
-5.  **Response Streaming**: OpenAI streams the AI's audio response back to Django, which immediately forwards it to the browser for playback.
+**Browser (Client)** `=> HTTP` **Django** (`/session/`, `/save-conversation/`, history APIs)
 
-## 📂 Project Structure
+1.  **Session Start**: The browser requests `/session/` from Django to obtain an ephemeral key and instructions (persona, English-only, tools).
+2.  **WebRTC Connect**: The browser establishes a direct Realtime session with OpenAI using SDP offer/answer and the ephemeral key.
+3.  **AI Initiates**: On data channel open, the assistant greets first.
+4.  **Live Conversation**: User audio and AI responses stream via WebRTC; transcripts render live.
+5.  **Finalize & Save**: The client persists conversation snapshots; `serializer.save()` upserts; optional Celery analysis runs.
+
+## Project Structure
 
 The repository is organized as follows:
 
 ```
 live-assist/
-├── .env                # Environment variables (API keys, secrets)
-├── live_assist/        # Django project configuration
-│   ├── asgi.py         # ASGI entry-point for Channels
-│   ├── settings.py     # Project settings
-│   └── urls.py         # Root URL configuration
-├── manage.py           # Django's command-line utility
-├── requirements.txt    # Python package dependencies
-├── static/             # Frontend assets (CSS, JS)
-├── templates/          # HTML templates
-└── voice/              # Django app for voice handling
-    ├── consumers.py    # WebSocket consumer for audio stream
-    ├── constants.py    # AI prompts, models, and API endpoints
-    ├── routing.py      # WebSocket URL routing
-    └── views.py        # Renders the main HTML page
+├── .env                       # Environment variables (API keys, secrets)
+├── live_assist/               # Django project configuration
+│   ├── settings.py
+│   ├── urls.py
+│   └── asgi.py
+├── manage.py
+├── requirements.txt
+├── templates/                 # HTML templates (project-level)
+│   ├── voice/index.html
+│   └── registration/{login.html, signup.html}
+└── voice/                     # Voice app
+    ├── models.py
+    ├── views.py               # /session/, /save-conversation/, history APIs (auth-gated)
+    ├── serializers.py         # SaveConversationSerializer.create() upsert
+    ├── services/
+    │   ├── analysis.py        # Post-conversation analysis (OpenAI Responses API)
+    │   └── convo.py
+    ├── tasks.py               # Celery task for analysis
+    ├── celery_app.py          # Celery app config (optional)
+    ├── constants.py           # Persona + tool directives (English-only)
+    └── static/voice/
+        ├── css/realtime.css
+        └── js/{app.js, history.js}
 ```
-
-## 🛠️ Setup and Installation
+## Setup and Installation
 
 1.  **Clone the repository:**
 
@@ -101,8 +113,7 @@ live-assist/
 6.  **Run the development server:**
 
     ```sh
-    # This command uses Daphne, the ASGI server required by Django Channels
-    daphne -p 8000 live_assist.asgi:application
+    python manage.py runserver
     ```
 
 7.  **Access the application:**
@@ -111,7 +122,7 @@ live-assist/
 
 ---
 
-## ✅ Data Persistence Notes
+## Data Persistence Notes
 
 Stopping a realtime conversation now triggers a two-step save on the backend:
 
@@ -120,12 +131,15 @@ Stopping a realtime conversation now triggers a two-step save on the backend:
 
 This ensures the Celery task (or synchronous fallback) persists the summary, satisfaction rating, feedback, and raw JSON payloads in `voice_conversation`.
 
-Optional beat scheduler (if you use periodic tasks):
+Optional Celery (analysis):
 
----
-## 🤝 Contributing
+```sh
+# Worker (analysis)
+celery -A voice.celery_app worker --loglevel=info
 
-Contributions are welcome! Please feel free to submit a pull request or open an issue for any bugs, feature requests, or improvements.
+# Beat (optional scheduled jobs)
+celery -A voice.celery_app beat --loglevel=info
+```
 
 1.  Fork the repository.
 2.  Create a new branch (`git checkout -b feature/your-feature-name`).

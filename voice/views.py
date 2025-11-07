@@ -24,7 +24,8 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from . import constants as C
+# Import application-wide constants (model names, endpoints, persona instructions)
+from . import constants as app_constants
 from .models import Conversation  # file://C:/Users/saish/Desktop/voice%20assist/voice/models.py#Conversation
 from .services.analysis import analyze_conversation_via_openai  # file://C:/Users/saish/Desktop/voice%20assist/voice/services/analysis.py#analyze_conversation_via_openai
 from .serializers import SaveConversationSerializer, ConversationResponseSerializer  # file://C:/Users/saish/Desktop/voice%20assist/voice/serializers.py#SaveConversationSerializer
@@ -33,10 +34,14 @@ logger = logging.getLogger(__name__)
 
 
 def index(request: HttpRequest):
+    """Render the main conversation page (history + realtime controls)."""
     return render(request, "voice/index.html")
 
 
 def signup_view(request: HttpRequest):
+    """Simple signup using Django's built-in UserCreationForm.
+    On success, auto-login and redirect to index.
+    """
     if request.method == "POST":
         form = UserCreationForm(request.POST)
         if form.is_valid():
@@ -50,6 +55,9 @@ def signup_view(request: HttpRequest):
 
 @require_GET
 def realtime_session(request: HttpRequest):
+    """Create an OpenAI Realtime session (ephemeral key + instructions).
+    Requires authentication; used by the browser to start WebRTC with OpenAI.
+    """
     # Enforce authentication for realtime session API
     if not getattr(request, "user", None) or not request.user.is_authenticated:
         return JsonResponse({"error": "Authentication required"}, status=401)
@@ -58,11 +66,11 @@ def realtime_session(request: HttpRequest):
         logger.error("OPENAI_API_KEY not configured")
         return HttpResponseServerError("OPENAI_API_KEY not configured")
 
-    model = os.environ.get("OPENAI_REALTIME_MODEL", C.DEFAULT_REALTIME_MODEL)
-    voice = os.environ.get("OPENAI_REALTIME_VOICE", C.DEFAULT_VOICE)
-    transcribe_model = os.environ.get("TRANSCRIBE_MODEL", C.DEFAULT_TRANSCRIBE_MODEL)
+    model = os.environ.get("OPENAI_REALTIME_MODEL", app_constants.DEFAULT_REALTIME_MODEL)
+    voice = os.environ.get("OPENAI_REALTIME_VOICE", app_constants.DEFAULT_VOICE)
+    transcribe_model = os.environ.get("TRANSCRIBE_MODEL", app_constants.DEFAULT_TRANSCRIBE_MODEL)
 
-    instructions = f"{C.RISHI_SYSTEM_INSTRUCTION}\n\n{C.TOOL_DIRECTIVE}\n\nAlways respond only in English. Do not switch languages."
+    instructions = f"{app_constants.RISHI_SYSTEM_INSTRUCTION}\n\n{app_constants.TOOL_DIRECTIVE}\n\nAlways respond only in English. Do not switch languages."
 
     tools = [
         {
@@ -83,7 +91,7 @@ def realtime_session(request: HttpRequest):
 
     payload = {
         "model": model,
-        "modalities": C.DEFAULT_MODALITIES,
+        "modalities": app_constants.DEFAULT_MODALITIES,
         "voice": voice,
         "instructions": instructions,
         "turn_detection": {"type": "server_vad", "silence_duration_ms": 800},
@@ -96,9 +104,9 @@ def realtime_session(request: HttpRequest):
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "OpenAI-Beta": C.OPENAI_BETA_HEADER_VALUE,
+            "OpenAI-Beta": app_constants.OPENAI_BETA_HEADER_VALUE,
         }
-        url = C.get_realtime_session_url()
+        url = app_constants.get_realtime_session_url()
         with httpx.Client(timeout=20) as client:
             resp = client.post(url, headers=headers, json=payload)
         if resp.status_code != 200:
@@ -345,6 +353,9 @@ def _derive_title_and_snippet(conversation_text: str, summary: str) -> dict:
 @require_GET
 @login_required
 def conversations_json(request: HttpRequest) -> JsonResponse:
+    """List recent conversations for the logged-in user.
+    Optional filters: limit, days, session_id, user_name.
+    """
     try:
         limit = max(1, min(100, int(request.GET.get("limit", "20"))))
     except ValueError:
@@ -384,6 +395,7 @@ def conversations_json(request: HttpRequest) -> JsonResponse:
 @require_GET
 @login_required
 def conversation_detail_json(request: HttpRequest, pk: int) -> JsonResponse:
+    """Return details for a single conversation by primary key (auth required)."""
     try:
         convo = Conversation.objects.get(pk=pk)
     except Conversation.DoesNotExist:
@@ -406,6 +418,7 @@ def conversation_detail_json(request: HttpRequest, pk: int) -> JsonResponse:
 @require_POST
 @login_required
 def conversation_delete_json(request: HttpRequest, pk: int) -> JsonResponse:
+    """Delete a conversation if owned by the user (or user is staff/superuser)."""
     user = getattr(request, "user", None)
     if not user or not user.is_authenticated:
         return JsonResponse({"error": "Authentication required"}, status=401)

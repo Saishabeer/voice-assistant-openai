@@ -8,7 +8,8 @@ from typing import Any, Dict, Tuple
 
 import httpx
 from django.conf import settings
-from voice import constants as C  # centralized defaults and endpoints
+# Import application-wide constants (model names, endpoints, beta headers)
+from voice import constants as app_constants
 
 
 def _build_json_schema() -> Dict[str, Any]:
@@ -65,11 +66,11 @@ def _responses_request(api_key: str, model: str, transcript: str) -> Tuple[Dict[
     )
 
     json_schema = _build_json_schema()
-    url = C.get_responses_url()
+    url = app_constants.get_responses_url()
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "OpenAI-Beta": C.RESPONSES_BETA_HEADER,
+        "OpenAI-Beta": app_constants.RESPONSES_BETA_HEADER,
     }
     payload = {
         "model": model,
@@ -177,7 +178,7 @@ def analyze_conversation_via_openai(conversation_text: str, model: str | None = 
     """
     transcript = (conversation_text or "").strip()
     api_key = (getattr(settings, "OPENAI_API_KEY", None) or os.environ.get("OPENAI_API_KEY", "")).strip()
-    model = (model or C.DEFAULT_SUMMARY_MODEL).strip() or "gpt-4o-mini"
+    model = (model or app_constants.DEFAULT_SUMMARY_MODEL).strip() or "gpt-4o-mini"
 
     if not transcript:
         # Empty transcript → short-circuit to local fallback
